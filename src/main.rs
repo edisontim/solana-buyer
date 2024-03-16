@@ -97,6 +97,7 @@ async fn main() {
     .await;
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn swap(
     client: &Arc<RpcClient>,
     user_keypair: &Keypair,
@@ -116,7 +117,7 @@ async fn swap(
     instructions.push(compute_unit_price_instruction);
 
     let (user_in_token_account, user_out_token_account, in_token_balance, acc_creation_needed) =
-        get_user_accounts(&client, &user_keypair, *in_token, *out_token, amount_in)
+        get_user_accounts(client, user_keypair, *in_token, *out_token, amount_in)
             .await
             .unwrap();
 
@@ -149,7 +150,7 @@ async fn swap(
         let price_per_in_token: f64 = quote_vault_balance / base_vault_balance;
         let mut amount_in = amount_in;
         if amount_in != -1.0 {
-            amount_in = amount_in * 10_f64.powi(base_vault_balance_info.decimals.into());
+            amount_in *= 10_f64.powi(base_vault_balance_info.decimals.into());
         } else {
             amount_in = in_token_balance as f64;
         }
@@ -180,7 +181,7 @@ async fn swap(
             &user_in_token_account,
             &user_out_token_account,
             &user_keypair.pubkey(),
-            amount_in as u64,
+            amount_in,
             amount_out as u64,
         )
         .unwrap();
@@ -189,7 +190,7 @@ async fn swap(
         let price_per_token: f64 = base_vault_balance / quote_vault_balance;
         let mut amount_in = amount_in;
         if amount_in != -1.0 {
-            amount_in = amount_in * 10_f64.powi(quote_vault_balance_info.decimals.into());
+            amount_in *= 10_f64.powi(quote_vault_balance_info.decimals.into());
         } else {
             amount_in = in_token_balance as f64;
         }

@@ -24,20 +24,13 @@ use spl_token_client::{
 use std::{str::FromStr, sync::Arc};
 
 pub async fn get_prio_fee(client: &RpcClient) -> (Instruction, Instruction) {
-    let recent_prio_fees = client.get_recent_prioritization_fees(&[]).await.unwrap();
-    let mut non_null_occurences = 0;
-    let total_fees: u64 = recent_prio_fees.iter().fold(0, |val, &x| {
-        if x.prioritization_fee != 0 {
-            non_null_occurences += 1;
-            val + x.prioritization_fee
-        } else {
-            val
-        }
-    });
-    let mut average_prio_fee = 0;
-    if non_null_occurences != 0 {
-        average_prio_fee = total_fees / non_null_occurences;
-    }
+    let mut recent_prio_fees = client.get_recent_prioritization_fees(&[]).await.unwrap();
+    recent_prio_fees.retain(|x| x.prioritization_fee != 0);
+
+    let total_fees: u64 = recent_prio_fees
+        .iter()
+        .fold(0, |acc, x| acc + x.prioritization_fee);
+    let mut average_prio_fee = total_fees / recent_prio_fees.len() as u64;
     if average_prio_fee < 12000 {
         average_prio_fee = 100_000;
     }
@@ -45,40 +38,34 @@ pub async fn get_prio_fee(client: &RpcClient) -> (Instruction, Instruction) {
     let compute_unit_limit_instruction = ComputeBudgetInstruction::set_compute_unit_limit(70_000);
     let compute_unit_price_instruction =
         ComputeBudgetInstruction::set_compute_unit_price(average_prio_fee);
-    return (
+    (
         compute_unit_limit_instruction,
         compute_unit_price_instruction,
-    );
+    )
 }
 
 pub fn get_associated_authority(program_id: Pubkey, market_id: Pubkey) -> Option<Pubkey> {
     let seeds = market_id.to_bytes();
-    let mut nonce: u8 = 0;
-    while nonce < 100 {
+    for nonce in 0..100 {
         let seeds: Vec<u8> = seeds.to_vec();
         let nonce_as_array: Vec<u8> = vec![nonce];
         let padding: Vec<u8> = vec![0, 0, 0, 0, 0, 0, 0];
         let key = Pubkey::create_program_address(&[&seeds, &nonce_as_array, &padding], &program_id);
-        if key.is_err() {
-            nonce += 1;
-            continue;
-        } else {
-            return Some(key.unwrap());
+        if let Ok(k) = key {
+            return Some(k);
         }
     }
-    return None;
+    None
 }
 
 pub async fn get_pool_info(client: &RpcClient, amm_id: &Pubkey) -> PoolInfo {
-    let pool_info = client.get_account_data(&amm_id).await.unwrap();
-    let pool_info = PoolInfo::deserialize(&mut &pool_info[..]).unwrap();
-    return pool_info;
+    let pool_info = client.get_account_data(amm_id).await.unwrap();
+    PoolInfo::deserialize(&mut &pool_info[..]).unwrap()
 }
 
 pub async fn get_market_info(client: &RpcClient, market_id: &Pubkey) -> MarketInfo {
-    let market_info = client.get_account_data(&market_id).await.unwrap();
-    let market_info = MarketInfo::deserialize(&mut &market_info[..]).unwrap();
-    return market_info;
+    let market_info = client.get_account_data(market_id).await.unwrap();
+    MarketInfo::deserialize(&mut &market_info[..]).unwrap()
 }
 
 pub async fn get_user_accounts(
@@ -90,7 +77,7 @@ pub async fn get_user_accounts(
 ) -> Result<(Pubkey, Pubkey, u64, bool), eyre::Error> {
     let user = user_keypair.pubkey();
 
-    let program_client = get_program_rpc(Arc::clone(&client));
+    let program_client = get_program_rpc(Arc::clone(client));
     let in_token_client = Token::new(
         Arc::clone(&program_client),
         &spl_token::ID,
@@ -175,12 +162,12 @@ pub async fn get_user_accounts(
     let balance = user_in_acct.base.amount;
     println!("User input-tokens ATA balance={}", balance);
 
-    return Ok((
+    Ok((
         user_in_token_account,
         user_out_token_account,
         balance,
         creation_needed,
-    ));
+    ))
 }
 
 fn get_program_rpc(rpc: Arc<RpcClient>) -> Arc<dyn ProgramClient<ProgramRpcClientSendTransaction>> {
@@ -198,15 +185,14 @@ pub async fn get_market_id(
 ) -> Pubkey {
     let candidate_market_id =
         get_candidate_market_id(rpc_client, base_mint_address, target_mint_address).await;
-    let market_id = if candidate_market_id.is_none() {
-        get_candidate_market_id(&rpc_client, target_mint_address, base_mint_address)
+    if let Some((market_id, _)) = candidate_market_id {
+        market_id
+    } else {
+        get_candidate_market_id(rpc_client, target_mint_address, base_mint_address)
             .await
             .unwrap()
             .0
-    } else {
-        candidate_market_id.unwrap().0
-    };
-    return market_id;
+    }
 }
 
 async fn get_candidate_market_id(
@@ -226,7 +212,7 @@ async fn get_candidate_market_id(
         MemcmpEncodedBytes::Base58(String::from_str(target_mint_address).unwrap()),
     ));
 
-    let program_accounts = rpc_client
+    rpc_client
         .get_program_accounts_with_config(
             &OPENBOOK,
             RpcProgramAccountsConfig {
@@ -242,6 +228,5 @@ async fn get_candidate_market_id(
         )
         .await
         .unwrap()
-        .pop();
-    return program_accounts;
+        .pop()
 }
