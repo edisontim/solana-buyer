@@ -6,7 +6,7 @@ use solana_sdk::{
 
 use crate::{
     constants::OPENBOOK,
-    types::{MarketInfo, PoolInfo, SplMint},
+    types::{MarketInfo, PoolInfo},
 };
 
 use borsh::BorshDeserialize;
@@ -35,12 +35,11 @@ pub async fn get_prio_fee(client: &RpcClient) -> (Instruction, Instruction) {
         }
     });
     let mut average_prio_fee = 0;
-    println!("non_null_occurences {}", non_null_occurences);
     if non_null_occurences != 0 {
         average_prio_fee = total_fees / non_null_occurences;
     }
-    if average_prio_fee < 6000 {
-        average_prio_fee = 6000;
+    if average_prio_fee < 12000 {
+        average_prio_fee = 100_000;
     }
     println!("avg prio fee {:?}", average_prio_fee);
     let compute_unit_limit_instruction = ComputeBudgetInstruction::set_compute_unit_limit(70_000);
@@ -82,19 +81,13 @@ pub async fn get_market_info(client: &RpcClient, market_id: &Pubkey) -> MarketIn
     return market_info;
 }
 
-pub async fn get_lp_mint_info(client: &RpcClient, lp_mint: &Pubkey) -> SplMint {
-    let lp_mint_info = client.get_account_data(&lp_mint).await.unwrap();
-    let lp_mint_info = SplMint::deserialize(&mut &lp_mint_info[..]).unwrap();
-    return lp_mint_info;
-}
-
 pub async fn get_user_accounts(
     client: &Arc<RpcClient>,
     user_keypair: &Keypair,
     in_token: Pubkey,
     out_token: Pubkey,
     amount_in: f64,
-) -> Result<(Pubkey, Pubkey), eyre::Error> {
+) -> Result<(Pubkey, Pubkey, u64, bool), eyre::Error> {
     let user = user_keypair.pubkey();
 
     let program_client = get_program_rpc(Arc::clone(&client));
@@ -132,18 +125,29 @@ pub async fn get_user_accounts(
         .get_account_info(&user_in_token_account)
         .await?;
 
-    // Create the user's out-token ATA if it doesn't exist.
+    let mut creation_needed = false;
     let user_out_token_account = out_token_client.get_associated_token_address(&user);
+    match out_token_client
+        .get_account_info(&user_out_token_account)
+        .await
+    {
+        Ok(_) => println!("User's ATA for output tokens exists. Skipping creation.."),
+        Err(TokenError::AccountNotFound) | Err(TokenError::AccountInvalidOwner) => {
+            creation_needed = true;
+        }
+        Err(error) => println!("Error retrieving user's output-tokens ATA: {}", error),
+    }
 
     let in_token_decimals = in_token_client.get_mint_info().await?.base.decimals;
 
-    let amount_in = (amount_in * (10_u64.pow(in_token_decimals.into()) as f64)) as u64;
+    let amount_in = amount_in * (10_u64.pow(in_token_decimals.into()) as f64);
 
     // TODO: If input tokens is the native mint(wSOL) and the balance is inadequate, attempt to
     // convert SOL to wSOL.
     let balance = user_in_acct.base.amount;
-    if in_token_client.is_native() && balance < amount_in {
-        let transfer_amt = amount_in - balance;
+    println!("balance {} -- amount_in {}", balance, amount_in);
+    if amount_in != -1.0 && in_token_client.is_native() && (balance as f64) < amount_in {
+        let transfer_amt = amount_in as u64 * 3;
         let blockhash = client.get_latest_blockhash().await?;
         let transfer_instruction =
             solana_sdk::system_instruction::transfer(&user, &user_in_token_account, transfer_amt);
@@ -171,7 +175,12 @@ pub async fn get_user_accounts(
     let balance = user_in_acct.base.amount;
     println!("User input-tokens ATA balance={}", balance);
 
-    return Ok((user_in_token_account, user_out_token_account));
+    return Ok((
+        user_in_token_account,
+        user_out_token_account,
+        balance,
+        creation_needed,
+    ));
 }
 
 fn get_program_rpc(rpc: Arc<RpcClient>) -> Arc<dyn ProgramClient<ProgramRpcClientSendTransaction>> {

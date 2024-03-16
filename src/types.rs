@@ -1,4 +1,6 @@
 use borsh::BorshDeserialize;
+use clap::Parser;
+use serde::Deserialize;
 use solana_sdk::pubkey::Pubkey;
 
 #[derive(Debug, Default, PartialEq, BorshDeserialize)]
@@ -86,13 +88,40 @@ pub struct MarketInfo {
     pub blob_1: [u8; 7],
 }
 
-#[derive(Debug, Default, PartialEq, BorshDeserialize)]
-pub struct SplMint {
-    pub mint_authority_option: u32,
-    pub mint_authority: Pubkey,
-    pub supply: u64,
-    pub decimals: u8,
-    pub is_initialized: u8,
-    pub freeze_authority_option: u32,
-    pub freeze_authority: Pubkey,
+/// Buy and sell memecoins
+#[derive(Parser, Debug)]
+#[command(version, about, long_about = None)]
+pub struct Args {
+    /// Input token address
+    #[arg(short, long)]
+    pub input_token_address: String,
+
+    /// Output token address
+    #[arg(short, long)]
+    pub output_token_address: String,
+
+    /// Amount in decimals in (-1 for max)
+    #[arg(short, long)]
+    pub amount_in: f64,
+
+    /// Slipage in %
+    #[arg(short, long)]
+    pub slipage: u64,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct Config {
+    pub ws_rpc_url: String,
+    pub http_rpc_url: String,
+    pub buyer_private_key: String,
+}
+
+impl Config {
+    pub fn from_dotenv() -> Self {
+        dotenvy::dotenv().ok();
+        match envy::from_env::<Config>() {
+            Ok(config) => config,
+            Err(error) => panic!("{:#?}", error),
+        }
+    }
 }
