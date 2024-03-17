@@ -1,5 +1,5 @@
 use borsh::BorshDeserialize;
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use serde::Deserialize;
 use solana_sdk::pubkey::Pubkey;
 
@@ -92,21 +92,30 @@ pub struct MarketInfo {
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 pub struct Args {
-    /// Input token address
-    #[arg(short, long)]
-    pub input_token_address: String,
+    #[clap(subcommand)]
+    pub command: Command,
+}
 
-    /// Output token address
-    #[arg(short, long)]
-    pub output_token_address: String,
+#[derive(Debug, Subcommand)]
+pub enum Command {
+    InstantSwap {
+        /// Input token address
+        #[arg(short, long)]
+        input_token_address: String,
 
-    /// Amount in decimals in (-1 for max)
-    #[arg(short, long)]
-    pub amount_in: f64,
+        /// Output token address
+        #[arg(short, long)]
+        output_token_address: String,
 
-    /// Slipage in %
-    #[arg(short, long)]
-    pub slipage: u64,
+        /// Amount in decimals in (-1 for max)
+        #[arg(short, long)]
+        amount_in: f64,
+
+        /// Slippage in %
+        #[arg(short, long)]
+        slippage: u64,
+    },
+    Listen,
 }
 
 #[derive(Deserialize, Debug)]
