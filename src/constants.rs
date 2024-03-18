@@ -3,7 +3,11 @@ use std::str::FromStr;
 use lazy_static::lazy_static;
 use solana_sdk::pubkey::Pubkey;
 
+/// Wrapped Solana token address. WSOL is a wrapped version of SOL that enables it to be easily used within DeFi
 pub const WSOL_ADDRESS: &str = "So11111111111111111111111111111111111111112";
+
+/// Account address that receives the fees when someone creates a Raydium
+pub const CREATE_POOL_FEE_ACCOUNT_ADDRESS: &str = "7YttLkHDoNj9wyDur5pM1ejNaAvT9X4eqaYcHQqtj2G5";
 
 lazy_static! {
     pub static ref OPENBOOK: Pubkey =

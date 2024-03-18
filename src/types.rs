@@ -1,5 +1,4 @@
 use borsh::BorshDeserialize;
-use clap::Parser;
 use serde::Deserialize;
 use solana_sdk::pubkey::Pubkey;
 
@@ -86,27 +85,6 @@ pub struct MarketInfo {
     pub fee_rate_bps: u64,
     pub referrer_rebates_accrued: u64,
     pub blob_1: [u8; 7],
-}
-
-/// Buy and sell memecoins
-#[derive(Parser, Debug)]
-#[command(version, about, long_about = None)]
-pub struct Args {
-    /// Input token address
-    #[arg(short, long)]
-    pub input_token_address: String,
-
-    /// Output token address
-    #[arg(short, long)]
-    pub output_token_address: String,
-
-    /// Amount in decimals in (-1 for max)
-    #[arg(short, long)]
-    pub amount_in: f64,
-
-    /// Slipage in %
-    #[arg(short, long)]
-    pub slipage: u64,
 }
 
 #[derive(Deserialize, Debug)]

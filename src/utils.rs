@@ -1,7 +1,7 @@
 use solana_account_decoder::UiAccountEncoding;
 use solana_sdk::{
     compute_budget::ComputeBudgetInstruction, instruction::Instruction, pubkey::Pubkey,
-    signature::Keypair, signer::Signer, transaction::Transaction,
+    signature::Keypair, signer::Signer,
 };
 
 use crate::{
@@ -23,7 +23,18 @@ use spl_token_client::{
 
 use std::{str::FromStr, sync::Arc};
 
-pub async fn get_prio_fee(client: &RpcClient) -> (Instruction, Instruction) {
+pub fn init_logging() {
+    if std::env::var("RUST_LOG").is_ok() {
+        std::env::set_var(
+            "RUST_LOG",
+            "solana_buyer=".to_owned() + &std::env::var("RUST_LOG").unwrap(),
+        )
+    }
+
+    env_logger::init();
+}
+
+pub async fn get_prio_fee_instructions(client: &RpcClient) -> (Instruction, Instruction) {
     let mut recent_prio_fees = client.get_recent_prioritization_fees(&[]).await.unwrap();
     recent_prio_fees.retain(|x| x.prioritization_fee != 0);
 
@@ -34,7 +45,7 @@ pub async fn get_prio_fee(client: &RpcClient) -> (Instruction, Instruction) {
     if average_prio_fee < 12000 {
         average_prio_fee = 100_000;
     }
-    println!("avg prio fee {:?}", average_prio_fee);
+    log::debug!("avg prio fee {:?}", average_prio_fee);
     let compute_unit_limit_instruction = ComputeBudgetInstruction::set_compute_unit_limit(70_000);
     let compute_unit_price_instruction =
         ComputeBudgetInstruction::set_compute_unit_price(average_prio_fee);
@@ -68,106 +79,62 @@ pub async fn get_market_info(client: &RpcClient, market_id: &Pubkey) -> MarketIn
     MarketInfo::deserialize(&mut &market_info[..]).unwrap()
 }
 
-pub async fn get_user_accounts(
+pub async fn get_user_token_accounts(
     client: &Arc<RpcClient>,
     user_keypair: &Keypair,
-    in_token: Pubkey,
-    out_token: Pubkey,
-    amount_in: f64,
-) -> Result<(Pubkey, Pubkey, u64, bool), eyre::Error> {
+    base_token: Pubkey,
+    quote_token: Pubkey,
+) -> Result<(Pubkey, Pubkey, Option<Pubkey>), eyre::Error> {
+    let mut account_to_create: Option<Pubkey> = None;
     let user = user_keypair.pubkey();
 
-    let program_client = get_program_rpc(Arc::clone(client));
-    let in_token_client = Token::new(
+    let program_client = get_program_rpc(Arc::clone(&client));
+    let base_token_client = Token::new(
         Arc::clone(&program_client),
         &spl_token::ID,
-        &in_token,
+        &base_token,
         None,
         Arc::new(Keypair::from_bytes(&user_keypair.to_bytes()).expect("failed to copy keypair")),
     );
-    let out_token_client = Token::new(
+    let quote_token_client = Token::new(
         Arc::clone(&program_client),
         &spl_token::ID,
-        &out_token,
+        &quote_token,
         None,
         Arc::new(Keypair::from_bytes(&user_keypair.to_bytes()).expect("failed to copy keypair")),
     );
 
-    let user_in_token_account = in_token_client.get_associated_token_address(&user);
-    match in_token_client
-        .get_account_info(&user_in_token_account)
+    let user_base_token_account = base_token_client.get_associated_token_address(&user);
+    match base_token_client
+        .get_account_info(&user_base_token_account)
         .await
     {
-        Ok(_) => println!("User's ATA for input tokens exists. Skipping creation.."),
+        Ok(_) => log::debug!("User's ATA for base token exists. Skipping creation.."),
         Err(TokenError::AccountNotFound) | Err(TokenError::AccountInvalidOwner) => {
-            println!("User's input-tokens ATA does not exist. Creating..");
-            in_token_client
-                .create_associated_token_account(&user)
-                .await?;
+            log::debug!("User's ATA for base token does not exist. Creating..");
+            account_to_create = Some(base_token);
         }
-        Err(error) => println!("Error retrieving user's input-tokens ATA: {}", error),
+        Err(error) => log::error!("Error retrieving user's base-tokens ATA: {}", error),
     };
 
-    let user_in_acct = in_token_client
-        .get_account_info(&user_in_token_account)
-        .await?;
-
-    let mut creation_needed = false;
-    let user_out_token_account = out_token_client.get_associated_token_address(&user);
-    match out_token_client
-        .get_account_info(&user_out_token_account)
+    let user_quote_token_account = quote_token_client.get_associated_token_address(&user);
+    match quote_token_client
+        .get_account_info(&user_quote_token_account)
         .await
     {
-        Ok(_) => println!("User's ATA for output tokens exists. Skipping creation.."),
+        Ok(_) => log::debug!("User's ATA for quote tokens exists. Skipping creation.."),
         Err(TokenError::AccountNotFound) | Err(TokenError::AccountInvalidOwner) => {
-            creation_needed = true;
+            log::debug!("User's ATA for quote token does not exist. Creating..");
+            account_to_create = Some(quote_token);
         }
-        Err(error) => println!("Error retrieving user's output-tokens ATA: {}", error),
+        Err(error) => log::error!("Error retrieving user's quote-tokens ATA: {}", error),
     }
-
-    let in_token_decimals = in_token_client.get_mint_info().await?.base.decimals;
-
-    let amount_in = amount_in * (10_u64.pow(in_token_decimals.into()) as f64);
-
-    // TODO: If input tokens is the native mint(wSOL) and the balance is inadequate, attempt to
-    // convert SOL to wSOL.
-    let balance = user_in_acct.base.amount;
-    println!("balance {} -- amount_in {}", balance, amount_in);
-    if amount_in != -1.0 && in_token_client.is_native() && (balance as f64) < amount_in {
-        let transfer_amt = amount_in as u64 * 3;
-        let blockhash = client.get_latest_blockhash().await?;
-        let transfer_instruction =
-            solana_sdk::system_instruction::transfer(&user, &user_in_token_account, transfer_amt);
-        let sync_instruction =
-            spl_token::instruction::sync_native(&spl_token::ID, &user_in_token_account)?;
-        let (compute_unit_limit_instruction, compute_unit_price_instruction) =
-            get_prio_fee(client).await;
-
-        let tx = Transaction::new_signed_with_payer(
-            &[
-                compute_unit_limit_instruction,
-                compute_unit_price_instruction,
-                transfer_instruction,
-                sync_instruction,
-            ],
-            Some(&user),
-            &[&user_keypair],
-            blockhash,
-        );
-        client
-            .send_and_confirm_transaction_with_spinner(&tx)
-            .await
-            .unwrap();
-    }
-    let balance = user_in_acct.base.amount;
-    println!("User input-tokens ATA balance={}", balance);
-
-    Ok((
-        user_in_token_account,
-        user_out_token_account,
-        balance,
-        creation_needed,
-    ))
+    log::debug!("account to create: {:?}", account_to_create);
+    return Ok((
+        user_base_token_account,
+        user_quote_token_account,
+        account_to_create,
+    ));
 }
 
 fn get_program_rpc(rpc: Arc<RpcClient>) -> Arc<dyn ProgramClient<ProgramRpcClientSendTransaction>> {
@@ -177,7 +144,7 @@ fn get_program_rpc(rpc: Arc<RpcClient>) -> Arc<dyn ProgramClient<ProgramRpcClien
     program_client
 }
 
-/// Fetches the marketID of the pool
+/// Fetches the serum marketID of the pool
 pub async fn get_market_id(
     rpc_client: &RpcClient,
     base_mint_address: &str,
