@@ -1,5 +1,4 @@
 use borsh::BorshDeserialize;
-use clap::{Parser, Subcommand};
 use serde::Deserialize;
 use solana_sdk::pubkey::Pubkey;
 
@@ -86,36 +85,6 @@ pub struct MarketInfo {
     pub fee_rate_bps: u64,
     pub referrer_rebates_accrued: u64,
     pub blob_1: [u8; 7],
-}
-
-/// Buy and sell memecoins
-#[derive(Parser, Debug)]
-#[command(version, about, long_about = None)]
-pub struct Args {
-    #[clap(subcommand)]
-    pub command: Command,
-}
-
-#[derive(Debug, Subcommand)]
-pub enum Command {
-    InstantSwap {
-        /// Input token address
-        #[arg(short, long)]
-        input_token_address: String,
-
-        /// Output token address
-        #[arg(short, long)]
-        output_token_address: String,
-
-        /// Amount in decimals in (-1 for max)
-        #[arg(short, long)]
-        amount_in: f64,
-
-        /// Slippage in %
-        #[arg(short, long)]
-        slippage: u64,
-    },
-    Listen,
 }
 
 #[derive(Deserialize, Debug)]

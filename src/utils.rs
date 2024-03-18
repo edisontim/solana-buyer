@@ -23,6 +23,17 @@ use spl_token_client::{
 
 use std::{str::FromStr, sync::Arc};
 
+pub fn init_logging() {
+    if std::env::var("RUST_LOG").is_ok() {
+        std::env::set_var(
+            "RUST_LOG",
+            "solana_buyer=".to_owned() + &std::env::var("RUST_LOG").unwrap(),
+        )
+    }
+
+    env_logger::init();
+}
+
 pub async fn get_prio_fee_instructions(client: &RpcClient) -> (Instruction, Instruction) {
     let mut recent_prio_fees = client.get_recent_prioritization_fees(&[]).await.unwrap();
     recent_prio_fees.retain(|x| x.prioritization_fee != 0);
@@ -98,12 +109,12 @@ pub async fn get_user_token_accounts(
         .get_account_info(&user_base_token_account)
         .await
     {
-        Ok(_) => log::debug!("User's ATA for input tokens exists. Skipping creation.."),
+        Ok(_) => log::debug!("User's ATA for base token exists. Skipping creation.."),
         Err(TokenError::AccountNotFound) | Err(TokenError::AccountInvalidOwner) => {
-            log::debug!("User's input-tokens ATA does not exist. Creating..");
+            log::debug!("User's ATA for base token does not exist. Creating..");
             account_to_create = Some(base_token);
         }
-        Err(error) => log::error!("Error retrieving user's input-tokens ATA: {}", error),
+        Err(error) => log::error!("Error retrieving user's base-tokens ATA: {}", error),
     };
 
     let user_quote_token_account = quote_token_client.get_associated_token_address(&user);
@@ -111,12 +122,14 @@ pub async fn get_user_token_accounts(
         .get_account_info(&user_quote_token_account)
         .await
     {
-        Ok(_) => log::debug!("User's ATA for output tokens exists. Skipping creation.."),
+        Ok(_) => log::debug!("User's ATA for quote tokens exists. Skipping creation.."),
         Err(TokenError::AccountNotFound) | Err(TokenError::AccountInvalidOwner) => {
+            log::debug!("User's ATA for quote token does not exist. Creating..");
             account_to_create = Some(quote_token);
         }
-        Err(error) => log::error!("Error retrieving user's output-tokens ATA: {}", error),
+        Err(error) => log::error!("Error retrieving user's quote-tokens ATA: {}", error),
     }
+    log::debug!("account to create: {:?}", account_to_create);
     return Ok((
         user_base_token_account,
         user_quote_token_account,

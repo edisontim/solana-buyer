@@ -2,32 +2,36 @@ use std::str::FromStr;
 
 mod constants;
 mod listener;
+mod subcommands;
 mod swapper;
 mod types;
 mod utils;
 mod websocket;
 
-use crate::{swapper::Swapper, types::Args};
+use {
+    subcommands::{instant_swap::InstantSwapSubcommand, Args, Subcommands},
+    swapper::Swapper,
+    types::Config,
+};
 
+use clap::Parser;
 use constants::CREATE_POOL_FEE_ACCOUNT_ADDRESS;
 use listener::Listener;
 use websocket::{LogsSubscribeResponse, WebSocket, WebSocketConfig};
 
 use solana_client::{nonblocking::rpc_client::RpcClient, rpc_config::RpcTransactionLogsConfig};
 
-use types::{Command, Config};
-use utils::get_market_id;
+use utils::{get_market_id, init_logging};
 
 use std::sync::Arc;
 
 use solana_sdk::{commitment_config::CommitmentConfig, pubkey::Pubkey};
 
-use clap::Parser;
 use env_logger;
 
 #[tokio::main]
 async fn main() {
-    env_logger::init();
+    init_logging();
 
     let config = Config::from_dotenv();
 
@@ -38,25 +42,10 @@ async fn main() {
     ));
 
     match args.command {
-        Command::Listen => {
+        Subcommands::Listen(_) => {
             listen(config);
         }
-        Command::InstantSwap {
-            input_token_address,
-            output_token_address,
-            amount_in,
-            slippage,
-        } => {
-            instant_swap(
-                client,
-                config,
-                input_token_address,
-                output_token_address,
-                amount_in,
-                slippage,
-            )
-            .await
-        }
+        Subcommands::InstantSwap(args) => instant_swap(client, config, args).await,
     }
 }
 
@@ -64,22 +53,21 @@ fn listen(config: Config) {
     let listener = Listener::from_config(config);
 }
 
-async fn instant_swap(
-    client: Arc<RpcClient>,
-    config: Config,
-    input_token_address: String,
-    output_token_address: String,
-    amount_in: f64,
-    slippage: u64,
-) {
-    let market_id = get_market_id(&client, &input_token_address, &output_token_address).await;
+async fn instant_swap(client: Arc<RpcClient>, config: Config, args: InstantSwapSubcommand) {
+    let market_id = get_market_id(
+        &client,
+        &args.input_token_address,
+        &args.output_token_address,
+    )
+    .await;
 
     let swapper = Swapper::new(client, market_id, config).await;
     swapper
         .swap(
-            &Pubkey::from_str(&input_token_address).expect("Enter correct input token address"),
-            amount_in,
-            slippage as f64,
+            &Pubkey::from_str(&args.input_token_address)
+                .expect("Enter correct input token address"),
+            args.amount_in,
+            args.slippage as f64,
         )
         .await;
 
@@ -90,9 +78,10 @@ async fn instant_swap(
 
     swapper
         .swap(
-            &Pubkey::from_str(&output_token_address).expect("Enter correct output token address"),
+            &Pubkey::from_str(&args.output_token_address)
+                .expect("Enter correct output token address"),
             amount_in,
-            slippage as f64,
+            args.slippage as f64,
         )
         .await;
 }

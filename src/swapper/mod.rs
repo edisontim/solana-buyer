@@ -68,7 +68,7 @@ impl Swapper {
         }
     }
 
-    pub async fn swap(self: &Self, in_token: &Pubkey, mut amount_in: f64, slippage: f64) {
+    pub async fn swap(self: &Self, in_token: &Pubkey, amount_in: f64, slippage: f64) {
         let mut instructions = vec![];
         let (out_token, user_out_token_account, user_in_token_account) =
             if *in_token == self.pool_info.base_mint {
@@ -124,19 +124,17 @@ impl Swapper {
         let base_vault_balance = base_vault_balance_info.amount.parse::<f64>().unwrap();
         let quote_vault_balance = quote_vault_balance_info.amount.parse::<f64>().unwrap();
 
-        if amount_in == -1.0 {
-            amount_in = in_token_balance as f64;
-        }
         let instruction: Instruction;
         if self.pool_info.base_mint == *in_token {
-            let amount_out = Swapper::get_amount_out(
+            let (amount_in, amount_out) = Swapper::get_swap_amounts(
                 amount_in,
                 slippage,
                 base_vault_balance,
                 quote_vault_balance,
                 base_vault_balance_info.decimals,
+                in_token_balance,
             );
-            log::debug!("trading {} in for minimum {} out", amount_in, amount_out);
+            log::debug!("swap base in: {} for minimum {} out", amount_in, amount_out);
             instruction = self.build_swap_base_in_instruction(
                 amount_in,
                 amount_out,
@@ -144,14 +142,19 @@ impl Swapper {
                 user_out_token_account,
             );
         } else {
-            let amount_out = Swapper::get_amount_out(
+            let (amount_in, amount_out) = Swapper::get_swap_amounts(
                 amount_in,
                 slippage,
                 quote_vault_balance,
                 base_vault_balance,
                 quote_vault_balance_info.decimals,
+                in_token_balance,
             );
-            log::debug!("trading {} in for minimum {} out", amount_in, amount_out);
+            log::debug!(
+                "swap base out: {} for minimum {} out",
+                amount_in,
+                amount_out
+            );
             instruction = self.build_swap_base_out_instruction(
                 amount_in,
                 amount_out,
@@ -227,18 +230,24 @@ impl Swapper {
         .unwrap()
     }
 
-    fn get_amount_out(
+    fn get_swap_amounts(
         mut amount_in: f64,
         slippage: f64,
         in_pool_liquidity: f64,
         out_pool_liquidity: f64,
         in_decimals: u8,
-    ) -> f64 {
+        in_token_balance: f64,
+    ) -> (f64, f64) {
         let price_per_in_token = out_pool_liquidity / in_pool_liquidity;
-        amount_in *= 10_f64.powi(in_decimals.into());
+
+        if amount_in == -1.0 {
+            amount_in = in_token_balance as f64;
+        } else {
+            amount_in *= 10_f64.powi(in_decimals.into());
+        }
         let mut amount_out = Into::<f64>::into(amount_in) * price_per_in_token;
-        amount_out *= amount_out * (100. - slippage) / 100.;
-        amount_out
+        amount_out *= (100. - slippage) / 100.;
+        (amount_in, amount_out)
     }
 
     async fn sign_and_send_instructions(self: &Self, instructions: Vec<Instruction>) {
