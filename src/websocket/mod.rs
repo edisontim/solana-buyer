@@ -36,8 +36,7 @@ impl WebSocket {
                 log::debug!("Connection lost: {}", read_result.err().unwrap());
                 let _ = self.socket.as_mut().unwrap().close(None);
                 let _ = self.socket.as_mut().unwrap().flush();
-                self.socket = None;
-                self.socket = Some(self.connect_and_subscribe()?);
+                self.connect_and_subscribe()?;
                 self.config.num_retries -= 1;
                 continue;
             }
@@ -66,31 +65,28 @@ impl WebSocket {
         })
         .to_string();
 
-        let mut temp_self = Self {
+        let mut ws = Self {
             socket: None,
             config,
             subscription_string: Some(subscription_string),
         };
 
-        let socket = temp_self.connect_and_subscribe();
-        temp_self.socket = Some(socket?);
-        Ok(temp_self)
+        ws.connect_and_subscribe()?;
+        Ok(ws)
     }
 
     pub fn as_mut(&mut self) -> &mut Self {
         self
     }
 
-    fn connect_and_subscribe(
-        self: &Self,
-    ) -> Result<tungstenite::WebSocket<tungstenite::stream::MaybeTlsStream<TcpStream>>, eyre::Error>
-    {
-        let mut socket = WebSocket::attemp_connection(&self.config.url, self.config.num_retries)?;
+    fn connect_and_subscribe(&mut self) -> Result<(), eyre::Error> {
+        let mut socket = WebSocket::attempt_connection(&self.config.url, self.config.num_retries)?;
         self.attempt_subscription(&mut socket, self.config.num_retries)?;
-        Ok(socket)
+        self.socket.replace(socket);
+        Ok(())
     }
 
-    fn attemp_connection(
+    fn attempt_connection(
         url: &str,
         mut num_retries: u8,
     ) -> Result<tungstenite::WebSocket<tungstenite::stream::MaybeTlsStream<TcpStream>>, eyre::Error>
@@ -111,7 +107,7 @@ impl WebSocket {
     }
 
     fn attempt_subscription(
-        self: &Self,
+        &self,
         socket: &mut tungstenite::WebSocket<tungstenite::stream::MaybeTlsStream<TcpStream>>,
         mut num_retries: u8,
     ) -> Result<(), eyre::Error> {
@@ -144,7 +140,7 @@ impl WebSocket {
         socket: &mut tungstenite::WebSocket<tungstenite::stream::MaybeTlsStream<TcpStream>>,
         subscription_string: &str,
     ) -> Result<(), eyre::Error> {
-        let _ = socket
+        socket
             .send(Message::Text(
                 String::from_str(subscription_string).unwrap(),
             ))
