@@ -34,7 +34,7 @@ pub async fn get_prio_fee_instructions(client: &RpcClient) -> (Instruction, Inst
     if average_prio_fee < 12000 {
         average_prio_fee = 100_000;
     }
-    println!("avg prio fee {:?}", average_prio_fee);
+    log::debug!("avg prio fee {:?}", average_prio_fee);
     let compute_unit_limit_instruction = ComputeBudgetInstruction::set_compute_unit_limit(70_000);
     let compute_unit_price_instruction =
         ComputeBudgetInstruction::set_compute_unit_price(average_prio_fee);
@@ -77,7 +77,7 @@ pub async fn get_user_token_accounts(
     let mut account_to_create: Option<Pubkey> = None;
     let user = user_keypair.pubkey();
 
-    let program_client = get_program_rpc(Arc::clone(client));
+    let program_client = get_program_rpc(Arc::clone(&client));
     let base_token_client = Token::new(
         Arc::clone(&program_client),
         &spl_token::ID,
@@ -98,12 +98,12 @@ pub async fn get_user_token_accounts(
         .get_account_info(&user_base_token_account)
         .await
     {
-        Ok(_) => println!("User's ATA for input tokens exists. Skipping creation.."),
+        Ok(_) => log::debug!("User's ATA for input tokens exists. Skipping creation.."),
         Err(TokenError::AccountNotFound) | Err(TokenError::AccountInvalidOwner) => {
-            println!("User's input-tokens ATA does not exist. Creating..");
+            log::debug!("User's input-tokens ATA does not exist. Creating..");
             account_to_create = Some(base_token);
         }
-        Err(error) => println!("Error retrieving user's input-tokens ATA: {}", error),
+        Err(error) => log::error!("Error retrieving user's input-tokens ATA: {}", error),
     };
 
     let user_quote_token_account = quote_token_client.get_associated_token_address(&user);
@@ -111,11 +111,11 @@ pub async fn get_user_token_accounts(
         .get_account_info(&user_quote_token_account)
         .await
     {
-        Ok(_) => println!("User's ATA for output tokens exists. Skipping creation.."),
+        Ok(_) => log::debug!("User's ATA for output tokens exists. Skipping creation.."),
         Err(TokenError::AccountNotFound) | Err(TokenError::AccountInvalidOwner) => {
             account_to_create = Some(quote_token);
         }
-        Err(error) => println!("Error retrieving user's output-tokens ATA: {}", error),
+        Err(error) => log::error!("Error retrieving user's output-tokens ATA: {}", error),
     }
     return Ok((
         user_base_token_account,

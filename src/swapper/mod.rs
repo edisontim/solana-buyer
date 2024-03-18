@@ -29,10 +29,7 @@ pub struct Swapper {
 }
 
 impl Swapper {
-    pub async fn new(market_id: Pubkey, config: Config) -> Self {
-        let client: Arc<RpcClient> = Arc::new(RpcClient::new(
-            String::from_str(&config.http_rpc_url).unwrap(),
-        ));
+    pub async fn new(client: Arc<RpcClient>, market_id: Pubkey, config: Config) -> Self {
         let user_keypair = Keypair::from_base58_string(&config.buyer_private_key);
 
         let amm_id = Pubkey::find_program_address(
@@ -127,10 +124,11 @@ impl Swapper {
         let base_vault_balance = base_vault_balance_info.amount.parse::<f64>().unwrap();
         let quote_vault_balance = quote_vault_balance_info.amount.parse::<f64>().unwrap();
 
+        if amount_in == -1.0 {
+            amount_in = in_token_balance as f64;
+        }
+        let instruction: Instruction;
         if self.pool_info.base_mint == *in_token {
-            if amount_in == -1.0 {
-                amount_in = in_token_balance as f64;
-            }
             let amount_out = Swapper::get_amount_out(
                 amount_in,
                 slippage,
@@ -138,18 +136,14 @@ impl Swapper {
                 quote_vault_balance,
                 base_vault_balance_info.decimals,
             );
-            println!("trading {} in for minimum {} out", amount_in, amount_out);
-            debug_assert!(self.pool_info.quote_mint == out_token);
-            instructions.push(self.build_swap_base_in_instruction(
+            log::debug!("trading {} in for minimum {} out", amount_in, amount_out);
+            instruction = self.build_swap_base_in_instruction(
                 amount_in,
                 amount_out,
                 user_in_token_account,
                 user_out_token_account,
-            ));
+            );
         } else {
-            if amount_in == -1.0 {
-                amount_in = in_token_balance as f64;
-            }
             let amount_out = Swapper::get_amount_out(
                 amount_in,
                 slippage,
@@ -157,15 +151,15 @@ impl Swapper {
                 base_vault_balance,
                 quote_vault_balance_info.decimals,
             );
-            println!("trading {} in for minimum {} out", amount_in, amount_out);
-            instructions.push(self.build_swap_base_out_instruction(
+            log::debug!("trading {} in for minimum {} out", amount_in, amount_out);
+            instruction = self.build_swap_base_out_instruction(
                 amount_in,
                 amount_out,
                 user_in_token_account,
                 user_out_token_account,
-            ));
+            );
         }
-
+        instructions.push(instruction);
         self.sign_and_send_instructions(instructions).await;
     }
 
@@ -234,17 +228,16 @@ impl Swapper {
     }
 
     fn get_amount_out(
-        amount_in: f64,
+        mut amount_in: f64,
         slippage: f64,
         in_pool_liquidity: f64,
         out_pool_liquidity: f64,
         in_decimals: u8,
     ) -> f64 {
-        let price_per_in_token: f64 = out_pool_liquidity / in_pool_liquidity;
-        let mut amount_in = amount_in;
-        amount_in = amount_in * 10_f64.powi(in_decimals.into());
-        let amount_out: f64 = Into::<f64>::into(amount_in) * price_per_in_token;
-        let amount_out: f64 = amount_out * (100.0 - slippage) / 100.0;
+        let price_per_in_token = out_pool_liquidity / in_pool_liquidity;
+        amount_in *= 10_f64.powi(in_decimals.into());
+        let mut amount_out = Into::<f64>::into(amount_in) * price_per_in_token;
+        amount_out *= amount_out * (100. - slippage) / 100.;
         amount_out
     }
 
@@ -277,7 +270,7 @@ impl Swapper {
             )
             .await
         {
-            println!("{e}");
+            log::error!("Failed to send transaction: {e}");
         };
     }
 }
