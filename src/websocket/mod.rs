@@ -1,4 +1,4 @@
-use std::{borrow::BorrowMut, net::TcpStream, str::FromStr};
+use std::{borrow::BorrowMut, net::TcpStream};
 
 use eyre::eyre;
 use serde::de::DeserializeOwned;
@@ -90,7 +90,7 @@ impl WebSocket<Uninitialized> {
             socket: None,
             config,
             subscription_string: Some(subscription_string),
-            status: PhantomData::default(),
+            status: PhantomData,
         };
 
         ws.connect_and_subscribe()?;
@@ -115,7 +115,7 @@ impl WebSocket<Initializing> {
             socket: uninitialized.socket,
             config: uninitialized.config,
             subscription_string: uninitialized.subscription_string,
-            status: PhantomData::default(),
+            status: PhantomData,
         }
     }
 }
@@ -168,9 +168,7 @@ fn subscribe(
     subscription_string: &str,
 ) -> Result<(), eyre::Error> {
     socket
-        .send(Message::Text(
-            String::from_str(subscription_string).unwrap(),
-        ))
+        .send(Message::Text(subscription_string.to_string()))
         .unwrap();
     let _ = serde_json::from_str::<SubscriptionResponse>(&socket.read()?.to_string());
     Ok(())

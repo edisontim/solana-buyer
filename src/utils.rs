@@ -27,7 +27,7 @@ use spl_token_client::{
     token::{Token, TokenError},
 };
 
-use std::{str::FromStr, sync::Arc};
+use std::sync::Arc;
 
 pub fn init_logging() {
     if std::env::var("RUST_LOG").is_ok() {
@@ -118,7 +118,7 @@ pub async fn get_user_token_accounts(
     let mut account_to_create: Option<Pubkey> = None;
     let user = user_keypair.pubkey();
 
-    let program_client = get_program_rpc(Arc::clone(&client));
+    let program_client = get_program_rpc(Arc::clone(client));
     let base_token_client = Token::new(
         Arc::clone(&program_client),
         &spl_token::ID,
@@ -160,11 +160,11 @@ pub async fn get_user_token_accounts(
         Err(error) => log::error!("Error retrieving user's quote-tokens ATA: {}", error),
     }
     log::debug!("account to create: {:?}", account_to_create);
-    return Ok((
+    Ok((
         user_base_token_account,
         user_quote_token_account,
         account_to_create,
-    ));
+    ))
 }
 
 // pub async fn get_multiple_token_accounts(
@@ -217,13 +217,13 @@ async fn get_candidate_market_id(
     const BASEMINT_OFFSET: usize = 53; // offset of 'BaseMint'
     let base_mint_memcmp = RpcFilterType::Memcmp(Memcmp::new(
         BASEMINT_OFFSET,
-        MemcmpEncodedBytes::Base58(String::from_str(base_mint_address).unwrap()),
+        MemcmpEncodedBytes::Base58(base_mint_address.to_string()),
     ));
 
     const TARGETMINT_OFFSET: usize = 85;
     let target_mint_memcmp = RpcFilterType::Memcmp(Memcmp::new(
         TARGETMINT_OFFSET, // offset of 'TargetMint'
-        MemcmpEncodedBytes::Base58(String::from_str(target_mint_address).unwrap()),
+        MemcmpEncodedBytes::Base58(target_mint_address.to_string()),
     ));
 
     rpc_client

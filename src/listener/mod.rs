@@ -33,16 +33,13 @@ impl Listener {
     pub fn from_config(client: Arc<RpcClient>, config: ProgramConfig) -> Self {
         Self { client, config }
     }
-    pub async fn listen(self: Self) {
+    pub async fn listen(self) {
         let mut ws = WebSocket::create_new_logs_subscription(
             WebSocketConfig {
                 num_retries: 5,
                 url: self.config.ws_rpc_url.clone(),
             },
-            RpcTransactionLogsFilter::Mentions(vec![String::from_str(
-                CREATE_POOL_FEE_ACCOUNT_ADDRESS,
-            )
-            .unwrap()]),
+            RpcTransactionLogsFilter::Mentions(vec![CREATE_POOL_FEE_ACCOUNT_ADDRESS.to_string()]),
             RpcTransactionLogsConfig {
                 commitment: Some(CommitmentConfig {
                     commitment: Confirmed,
@@ -130,7 +127,7 @@ impl Listener {
                 signature.err()
             ));
         }
-        return Ok(signature.unwrap());
+        Ok(signature.unwrap())
     }
 
     fn get_account_keys_from_transaction(

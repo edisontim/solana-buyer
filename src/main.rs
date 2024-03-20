@@ -1,5 +1,3 @@
-use std::str::FromStr;
-
 mod constants;
 mod listener;
 mod subcommands;
@@ -29,9 +27,7 @@ async fn main() {
 
     let args = Args::parse();
 
-    let client = Arc::new(RpcClient::new(
-        String::from_str(&config.http_rpc_url).unwrap(),
-    ));
+    let client = Arc::new(RpcClient::new(config.http_rpc_url.clone()));
 
     match args.command {
         Subcommands::Listen(listen) => listen.run(client, config).await,

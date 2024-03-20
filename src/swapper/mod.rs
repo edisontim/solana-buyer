@@ -108,7 +108,7 @@ impl Swapper {
         }
     }
 
-    pub async fn swap(self: &Self, in_token: &Pubkey, amount_in: f64) {
+    pub async fn swap(&self, in_token: &Pubkey, amount_in: f64) {
         let mut instructions = vec![];
         let (out_token, user_out_token_account, user_in_token_account) =
             if *in_token == self.pool_info.base_mint {
@@ -173,26 +173,22 @@ impl Swapper {
             .parse::<f64>()
             .unwrap();
 
-        let instruction: Instruction;
-        let amount_in_final;
-        if self.pool_info.base_mint == *in_token {
-            let amount_in = Swapper::get_swap_amounts(
+        let amount_in = if self.pool_info.base_mint == *in_token {
+            Swapper::get_swap_amounts(
                 amount_in,
                 base_vault_balance_info.decimals,
                 in_token_balance,
-            );
-            amount_in_final = amount_in;
+            )
         } else {
-            let amount_in = Swapper::get_swap_amounts(
+            Swapper::get_swap_amounts(
                 amount_in,
                 quote_vault_balance_info.decimals,
                 in_token_balance,
-            );
-            amount_in_final = amount_in;
-        }
-        log::debug!("swap base in: {} for minimum 0 out", amount_in_final);
-        instruction = self.build_swap_base_in_instruction(
-            amount_in_final,
+            )
+        };
+        log::debug!("swap base in: {} for minimum 0 out", amount_in);
+        let instruction = self.build_swap_base_in_instruction(
+            amount_in,
             0.,
             user_in_token_account,
             user_out_token_account,
@@ -203,7 +199,7 @@ impl Swapper {
     }
 
     fn build_swap_base_in_instruction(
-        self: &Self,
+        &self,
         amount_in: f64,
         amount_out: f64,
         user_in_token_account: Pubkey,
@@ -236,14 +232,14 @@ impl Swapper {
 
     fn get_swap_amounts(mut amount_in: f64, in_decimals: u8, in_token_balance: f64) -> f64 {
         if amount_in == 0. {
-            amount_in = in_token_balance as f64;
+            amount_in = in_token_balance;
         } else {
             amount_in *= 10_f64.powi(in_decimals.into());
         }
         amount_in
     }
 
-    async fn sign_and_send_instructions(self: &Self, instructions: Vec<Instruction>) {
+    async fn sign_and_send_instructions(&self, instructions: Vec<Instruction>) {
         let recent_blockhash = self
             .client
             .get_latest_blockhash_with_commitment(solana_sdk::commitment_config::CommitmentConfig {
