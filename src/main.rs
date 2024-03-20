@@ -10,7 +10,7 @@ mod websocket;
 
 use {
     subcommands::{Args, Subcommands},
-    types::Config,
+    types::ProgramConfig,
 };
 
 use clap::Parser;
@@ -25,7 +25,7 @@ use std::sync::Arc;
 async fn main() {
     init_logging();
 
-    let config = Config::from_dotenv();
+    let config = ProgramConfig::from_dotenv();
 
     let args = Args::parse();
 
@@ -34,7 +34,7 @@ async fn main() {
     ));
 
     match args.command {
-        Subcommands::Listen(listen) => listen.run(config),
+        Subcommands::Listen(listen) => listen.run(client, config).await,
         Subcommands::InstantSwap(instant_swap) => instant_swap.run(client, config).await,
     }
 }

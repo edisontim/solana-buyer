@@ -1,8 +1,14 @@
+use eyre::eyre;
 use solana_account_decoder::UiAccountEncoding;
 use solana_sdk::{
-    compute_budget::ComputeBudgetInstruction, instruction::Instruction, pubkey::Pubkey,
-    signature::Keypair, signer::Signer,
+    commitment_config::CommitmentConfig,
+    compute_budget::ComputeBudgetInstruction,
+    instruction::Instruction,
+    pubkey::Pubkey,
+    signature::{Keypair, Signature},
+    signer::Signer,
 };
+use solana_transaction_status::EncodedConfirmedTransactionWithStatusMeta;
 
 use crate::{
     constants::OPENBOOK,
@@ -12,7 +18,7 @@ use crate::{
 use borsh::BorshDeserialize;
 use solana_client::{
     nonblocking::rpc_client::RpcClient,
-    rpc_config::{RpcAccountInfoConfig, RpcProgramAccountsConfig},
+    rpc_config::{RpcAccountInfoConfig, RpcProgramAccountsConfig, RpcTransactionConfig},
     rpc_filter::{Memcmp, MemcmpEncodedBytes, RpcFilterType},
 };
 
@@ -42,8 +48,8 @@ pub async fn get_prio_fee_instructions(client: &RpcClient) -> (Instruction, Inst
         .iter()
         .fold(0, |acc, x| acc + x.prioritization_fee);
     let mut average_prio_fee = total_fees / recent_prio_fees.len() as u64;
-    if average_prio_fee < 12000 {
-        average_prio_fee = 100_000;
+    if average_prio_fee < 100_000 {
+        average_prio_fee = 400_000;
     }
     log::debug!("avg prio fee {:?}", average_prio_fee);
     let compute_unit_limit_instruction = ComputeBudgetInstruction::set_compute_unit_limit(70_000);
@@ -67,6 +73,30 @@ pub fn get_associated_authority(program_id: Pubkey, market_id: Pubkey) -> Option
         }
     }
     None
+}
+
+pub async fn get_pool_and_market_info(
+    client: &RpcClient,
+    amm_id: &Pubkey,
+    market_id: &Pubkey,
+) -> (PoolInfo, MarketInfo) {
+    let mut rpc_response = client
+        .get_multiple_accounts_with_config(
+            &[*amm_id, *market_id],
+            RpcAccountInfoConfig {
+                encoding: Some(UiAccountEncoding::Base64),
+                data_slice: None,
+                commitment: Some(CommitmentConfig::processed()),
+                ..RpcAccountInfoConfig::default()
+            },
+        )
+        .await
+        .unwrap();
+    let pool_account = rpc_response.value.remove(0).unwrap();
+    let pool_info = PoolInfo::deserialize(&mut &pool_account.data[..]).unwrap();
+    let market_account = rpc_response.value.pop().unwrap().unwrap();
+    let market_info = MarketInfo::deserialize(&mut &market_account.data[..]).unwrap();
+    (pool_info, market_info)
 }
 
 pub async fn get_pool_info(client: &RpcClient, amm_id: &Pubkey) -> PoolInfo {
@@ -137,6 +167,23 @@ pub async fn get_user_token_accounts(
     ));
 }
 
+// pub async fn get_multiple_token_accounts(
+//     client: &RpcClient,
+//     accounts_addresses: Vec<Pubkey>,
+// ) -> Result<Vec<Option<Account>>, eyre::Error> {
+//     client
+//         .get_multiple_accounts_with_config(
+//             &accounts_addresses,
+//             RpcAccountInfoConfig {
+//                 encoding: Some(UiAccountEncoding::Base64Zstd),
+//                 commitment: Some(CommitmentConfig::processed()),
+//                 data_slice: None,
+//                 min_context_slot: None,
+//             },
+//         )
+//         .await
+// }
+
 fn get_program_rpc(rpc: Arc<RpcClient>) -> Arc<dyn ProgramClient<ProgramRpcClientSendTransaction>> {
     let program_client: Arc<dyn ProgramClient<ProgramRpcClientSendTransaction>> = Arc::new(
         ProgramRpcClient::new(rpc.clone(), ProgramRpcClientSendTransaction),
@@ -186,9 +233,7 @@ async fn get_candidate_market_id(
                 filters: Some(vec![base_mint_memcmp, target_mint_memcmp]),
                 account_config: RpcAccountInfoConfig {
                     encoding: Some(UiAccountEncoding::Base64),
-                    data_slice: None,
-                    commitment: None,
-                    min_context_slot: None,
+                    ..RpcAccountInfoConfig::default()
                 },
                 with_context: Some(true),
             },
@@ -196,4 +241,24 @@ async fn get_candidate_market_id(
         .await
         .unwrap()
         .pop()
+}
+
+pub async fn get_transaction_from_signature(
+    client: &RpcClient,
+    signature: Signature,
+    rpc_transaction_config: RpcTransactionConfig,
+) -> Result<EncodedConfirmedTransactionWithStatusMeta, eyre::Error> {
+    let get_transaction_result = client
+        .get_transaction_with_config(&signature, rpc_transaction_config)
+        .await;
+
+    if get_transaction_result.is_err() {
+        return Err(eyre!(
+            "Failed to get transaction: {:?}",
+            get_transaction_result.err()
+        ));
+    }
+
+    let transaction = get_transaction_result.unwrap();
+    Ok(transaction)
 }

@@ -88,16 +88,16 @@ pub struct MarketInfo {
 }
 
 #[derive(Deserialize, Debug)]
-pub struct Config {
+pub struct ProgramConfig {
     pub ws_rpc_url: String,
     pub http_rpc_url: String,
     pub buyer_private_key: String,
 }
 
-impl Config {
+impl ProgramConfig {
     pub fn from_dotenv() -> Self {
         dotenvy::dotenv().ok();
-        match envy::from_env::<Config>() {
+        match envy::from_env::<ProgramConfig>() {
             Ok(config) => config,
             Err(error) => panic!("{:#?}", error),
         }

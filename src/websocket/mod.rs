@@ -12,11 +12,11 @@ use tungstenite::{connect, Message};
 use url::Url;
 
 #[allow(dead_code)]
-struct Uninitialized;
+pub struct Uninitialized;
 #[allow(dead_code)]
-struct Initialized;
+pub struct Initialized;
 #[allow(dead_code)]
-struct Initializing;
+pub struct Initializing;
 
 pub struct WebSocket<Status = Uninitialized> {
     socket: Option<tungstenite::WebSocket<tungstenite::stream::MaybeTlsStream<TcpStream>>>,
@@ -179,16 +179,16 @@ fn subscribe(
 #[allow(unused)]
 #[derive(Debug, serde::Deserialize)]
 pub struct LogsSubscribeResponse {
-    jsonrpc: String,
-    method: String,
-    params: SubscribeResponseParams,
+    pub jsonrpc: String,
+    pub method: String,
+    pub params: SubscribeResponseParams,
 }
 
 #[allow(unused)]
 #[derive(Debug, serde::Deserialize)]
-struct SubscribeResponseParams {
-    subscription: u8,
-    result: Response<RpcLogsResponse>,
+pub struct SubscribeResponseParams {
+    pub subscription: u32,
+    pub result: Response<RpcLogsResponse>,
 }
 
 #[allow(unused)]

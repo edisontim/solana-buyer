@@ -4,7 +4,7 @@ use clap::Args;
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::pubkey::Pubkey;
 
-use crate::{swapper::Swapper, types::Config, utils::get_market_id};
+use crate::{swapper::Swapper, types::ProgramConfig, utils::get_market_id};
 #[derive(Debug, Args)]
 pub struct InstantSwapSubcommand {
     /// Input token address
@@ -18,14 +18,10 @@ pub struct InstantSwapSubcommand {
     /// Amount in decimals in (-1 for max)
     #[arg(short, long)]
     pub amount_in: f64,
-
-    /// Slippage in %
-    #[arg(short, long)]
-    pub slippage: u64,
 }
 
 impl InstantSwapSubcommand {
-    pub async fn run(self, client: Arc<RpcClient>, config: Config) {
+    pub async fn run(self, client: Arc<RpcClient>, config: ProgramConfig) {
         let market_id = get_market_id(
             &client,
             &self.input_token_address,
@@ -39,7 +35,6 @@ impl InstantSwapSubcommand {
                 &Pubkey::from_str(&self.input_token_address)
                     .expect("Enter correct input token address"),
                 self.amount_in,
-                self.slippage as f64,
             )
             .await;
 
@@ -53,7 +48,6 @@ impl InstantSwapSubcommand {
                 &Pubkey::from_str(&self.output_token_address)
                     .expect("Enter correct output token address"),
                 amount_in,
-                self.slippage as f64,
             )
             .await;
     }
