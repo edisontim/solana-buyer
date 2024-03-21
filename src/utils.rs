@@ -1,8 +1,14 @@
+use eyre::eyre;
 use solana_account_decoder::UiAccountEncoding;
 use solana_sdk::{
-    compute_budget::ComputeBudgetInstruction, instruction::Instruction, pubkey::Pubkey,
-    signature::Keypair, signer::Signer,
+    commitment_config::CommitmentConfig,
+    compute_budget::ComputeBudgetInstruction,
+    instruction::Instruction,
+    pubkey::Pubkey,
+    signature::{Keypair, Signature},
+    signer::Signer,
 };
+use solana_transaction_status::EncodedConfirmedTransactionWithStatusMeta;
 
 use crate::{
     constants::OPENBOOK,
@@ -12,7 +18,7 @@ use crate::{
 use borsh::BorshDeserialize;
 use solana_client::{
     nonblocking::rpc_client::RpcClient,
-    rpc_config::{RpcAccountInfoConfig, RpcProgramAccountsConfig},
+    rpc_config::{RpcAccountInfoConfig, RpcProgramAccountsConfig, RpcTransactionConfig},
     rpc_filter::{Memcmp, MemcmpEncodedBytes, RpcFilterType},
 };
 
@@ -21,7 +27,7 @@ use spl_token_client::{
     token::{Token, TokenError},
 };
 
-use std::{str::FromStr, sync::Arc};
+use std::sync::Arc;
 
 pub fn init_logging() {
     if std::env::var("RUST_LOG").is_ok() {
@@ -34,21 +40,11 @@ pub fn init_logging() {
     env_logger::init();
 }
 
-pub async fn get_prio_fee_instructions(client: &RpcClient) -> (Instruction, Instruction) {
-    let mut recent_prio_fees = client.get_recent_prioritization_fees(&[]).await.unwrap();
-    recent_prio_fees.retain(|x| x.prioritization_fee != 0);
-
-    let total_fees: u64 = recent_prio_fees
-        .iter()
-        .fold(0, |acc, x| acc + x.prioritization_fee);
-    let mut average_prio_fee = total_fees / recent_prio_fees.len() as u64;
-    if average_prio_fee < 12000 {
-        average_prio_fee = 100_000;
-    }
-    log::debug!("avg prio fee {:?}", average_prio_fee);
+pub fn get_prio_fee_instructions() -> (Instruction, Instruction) {
+    let prio_fee = 130_000;
+    log::debug!("avg prio fee {:?}", prio_fee);
     let compute_unit_limit_instruction = ComputeBudgetInstruction::set_compute_unit_limit(70_000);
-    let compute_unit_price_instruction =
-        ComputeBudgetInstruction::set_compute_unit_price(average_prio_fee);
+    let compute_unit_price_instruction = ComputeBudgetInstruction::set_compute_unit_price(prio_fee);
     (
         compute_unit_limit_instruction,
         compute_unit_price_instruction,
@@ -67,6 +63,30 @@ pub fn get_associated_authority(program_id: Pubkey, market_id: Pubkey) -> Option
         }
     }
     None
+}
+
+pub async fn get_pool_and_market_info(
+    client: &RpcClient,
+    amm_id: &Pubkey,
+    market_id: &Pubkey,
+) -> (PoolInfo, MarketInfo) {
+    let mut rpc_response = client
+        .get_multiple_accounts_with_config(
+            &[*amm_id, *market_id],
+            RpcAccountInfoConfig {
+                encoding: Some(UiAccountEncoding::Base64),
+                data_slice: None,
+                commitment: Some(CommitmentConfig::processed()),
+                ..RpcAccountInfoConfig::default()
+            },
+        )
+        .await
+        .unwrap();
+    let pool_account = rpc_response.value.remove(0).unwrap();
+    let pool_info = PoolInfo::deserialize(&mut &pool_account.data[..]).unwrap();
+    let market_account = rpc_response.value.pop().unwrap().unwrap();
+    let market_info = MarketInfo::deserialize(&mut &market_account.data[..]).unwrap();
+    (pool_info, market_info)
 }
 
 pub async fn get_pool_info(client: &RpcClient, amm_id: &Pubkey) -> PoolInfo {
@@ -88,7 +108,7 @@ pub async fn get_user_token_accounts(
     let mut account_to_create: Option<Pubkey> = None;
     let user = user_keypair.pubkey();
 
-    let program_client = get_program_rpc(Arc::clone(&client));
+    let program_client = get_program_rpc(Arc::clone(client));
     let base_token_client = Token::new(
         Arc::clone(&program_client),
         &spl_token::ID,
@@ -130,11 +150,11 @@ pub async fn get_user_token_accounts(
         Err(error) => log::error!("Error retrieving user's quote-tokens ATA: {}", error),
     }
     log::debug!("account to create: {:?}", account_to_create);
-    return Ok((
+    Ok((
         user_base_token_account,
         user_quote_token_account,
         account_to_create,
-    ));
+    ))
 }
 
 fn get_program_rpc(rpc: Arc<RpcClient>) -> Arc<dyn ProgramClient<ProgramRpcClientSendTransaction>> {
@@ -170,13 +190,13 @@ async fn get_candidate_market_id(
     const BASEMINT_OFFSET: usize = 53; // offset of 'BaseMint'
     let base_mint_memcmp = RpcFilterType::Memcmp(Memcmp::new(
         BASEMINT_OFFSET,
-        MemcmpEncodedBytes::Base58(String::from_str(base_mint_address).unwrap()),
+        MemcmpEncodedBytes::Base58(base_mint_address.to_string()),
     ));
 
     const TARGETMINT_OFFSET: usize = 85;
     let target_mint_memcmp = RpcFilterType::Memcmp(Memcmp::new(
         TARGETMINT_OFFSET, // offset of 'TargetMint'
-        MemcmpEncodedBytes::Base58(String::from_str(target_mint_address).unwrap()),
+        MemcmpEncodedBytes::Base58(target_mint_address.to_string()),
     ));
 
     rpc_client
@@ -186,9 +206,7 @@ async fn get_candidate_market_id(
                 filters: Some(vec![base_mint_memcmp, target_mint_memcmp]),
                 account_config: RpcAccountInfoConfig {
                     encoding: Some(UiAccountEncoding::Base64),
-                    data_slice: None,
-                    commitment: None,
-                    min_context_slot: None,
+                    ..RpcAccountInfoConfig::default()
                 },
                 with_context: Some(true),
             },
@@ -196,4 +214,24 @@ async fn get_candidate_market_id(
         .await
         .unwrap()
         .pop()
+}
+
+pub async fn get_transaction_from_signature(
+    client: &RpcClient,
+    signature: Signature,
+    rpc_transaction_config: RpcTransactionConfig,
+) -> Result<EncodedConfirmedTransactionWithStatusMeta, eyre::Error> {
+    let get_transaction_result = client
+        .get_transaction_with_config(&signature, rpc_transaction_config)
+        .await;
+
+    if get_transaction_result.is_err() {
+        return Err(eyre!(
+            "Failed to get transaction: {:?}",
+            get_transaction_result.err()
+        ));
+    }
+
+    let transaction = get_transaction_result.unwrap();
+    Ok(transaction)
 }

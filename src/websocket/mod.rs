@@ -1,4 +1,4 @@
-use std::{borrow::BorrowMut, net::TcpStream, str::FromStr};
+use std::{borrow::BorrowMut, net::TcpStream};
 
 use eyre::eyre;
 use serde::de::DeserializeOwned;
@@ -12,11 +12,11 @@ use tungstenite::{connect, Message};
 use url::Url;
 
 #[allow(dead_code)]
-struct Uninitialized;
+pub struct Uninitialized;
 #[allow(dead_code)]
-struct Initialized;
+pub struct Initialized;
 #[allow(dead_code)]
-struct Initializing;
+pub struct Initializing;
 
 pub struct WebSocket<Status = Uninitialized> {
     socket: Option<tungstenite::WebSocket<tungstenite::stream::MaybeTlsStream<TcpStream>>>,
@@ -90,7 +90,7 @@ impl WebSocket<Uninitialized> {
             socket: None,
             config,
             subscription_string: Some(subscription_string),
-            status: PhantomData::default(),
+            status: PhantomData,
         };
 
         ws.connect_and_subscribe()?;
@@ -115,7 +115,7 @@ impl WebSocket<Initializing> {
             socket: uninitialized.socket,
             config: uninitialized.config,
             subscription_string: uninitialized.subscription_string,
-            status: PhantomData::default(),
+            status: PhantomData,
         }
     }
 }
@@ -168,9 +168,7 @@ fn subscribe(
     subscription_string: &str,
 ) -> Result<(), eyre::Error> {
     socket
-        .send(Message::Text(
-            String::from_str(subscription_string).unwrap(),
-        ))
+        .send(Message::Text(subscription_string.to_string()))
         .unwrap();
     let _ = serde_json::from_str::<SubscriptionResponse>(&socket.read()?.to_string());
     Ok(())
@@ -179,16 +177,16 @@ fn subscribe(
 #[allow(unused)]
 #[derive(Debug, serde::Deserialize)]
 pub struct LogsSubscribeResponse {
-    jsonrpc: String,
-    method: String,
-    params: SubscribeResponseParams,
+    pub jsonrpc: String,
+    pub method: String,
+    pub params: SubscribeResponseParams,
 }
 
 #[allow(unused)]
 #[derive(Debug, serde::Deserialize)]
-struct SubscribeResponseParams {
-    subscription: u8,
-    result: Response<RpcLogsResponse>,
+pub struct SubscribeResponseParams {
+    pub subscription: u32,
+    pub result: Response<RpcLogsResponse>,
 }
 
 #[allow(unused)]
