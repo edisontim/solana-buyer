@@ -21,6 +21,4 @@ lazy_static! {
     pub static ref TOKEN_PROGRAM: Pubkey =
         Pubkey::from_str("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA").unwrap();
     pub static ref SOL: Pubkey = Pubkey::from_str(WSOL_ADDRESS).unwrap();
-    pub static ref USDC: Pubkey =
-        Pubkey::from_str("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v").unwrap();
 }
