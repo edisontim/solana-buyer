@@ -7,10 +7,8 @@ mod utils;
 mod websocket;
 
 use {
-    constants::SOLANA_PRICE,
     subcommands::{Args, Subcommands},
     types::ProgramConfig,
-    utils::get_sol_price,
 };
 
 use clap::Parser;
@@ -30,12 +28,6 @@ async fn main() {
     let args = Args::parse();
 
     let client = Arc::new(RpcClient::new(config.http_rpc_url.clone()));
-
-    let _ = SOLANA_PRICE.set(
-        get_sol_price()
-            .await
-            .expect("Couldn't fetch the price of Solana"),
-    );
 
     match args.command {
         Subcommands::Listen(listen) => listen.run(client, config).await,

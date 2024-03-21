@@ -1,5 +1,4 @@
 use eyre::eyre;
-use serde::Deserialize;
 use solana_account_decoder::UiAccountEncoding;
 use solana_sdk::{
     commitment_config::CommitmentConfig,
@@ -12,7 +11,7 @@ use solana_sdk::{
 use solana_transaction_status::EncodedConfirmedTransactionWithStatusMeta;
 
 use crate::{
-    constants::{COINGECKO_SOLANA_PRICE_API_URL, OPENBOOK},
+    constants::OPENBOOK,
     types::{MarketInfo, PoolInfo},
 };
 
@@ -41,21 +40,11 @@ pub fn init_logging() {
     env_logger::init();
 }
 
-pub async fn get_prio_fee_instructions(client: &RpcClient) -> (Instruction, Instruction) {
-    let mut recent_prio_fees = client.get_recent_prioritization_fees(&[]).await.unwrap();
-    recent_prio_fees.retain(|x| x.prioritization_fee != 0);
-
-    let total_fees: u64 = recent_prio_fees
-        .iter()
-        .fold(0, |acc, x| acc + x.prioritization_fee);
-    let mut average_prio_fee = total_fees / recent_prio_fees.len() as u64;
-    if average_prio_fee < 100_000 {
-        average_prio_fee = 130_000;
-    }
-    log::debug!("avg prio fee {:?}", average_prio_fee);
+pub fn get_prio_fee_instructions() -> (Instruction, Instruction) {
+    let prio_fee = 130_000;
+    log::debug!("avg prio fee {:?}", prio_fee);
     let compute_unit_limit_instruction = ComputeBudgetInstruction::set_compute_unit_limit(70_000);
-    let compute_unit_price_instruction =
-        ComputeBudgetInstruction::set_compute_unit_price(average_prio_fee);
+    let compute_unit_price_instruction = ComputeBudgetInstruction::set_compute_unit_price(prio_fee);
     (
         compute_unit_limit_instruction,
         compute_unit_price_instruction,
@@ -168,23 +157,6 @@ pub async fn get_user_token_accounts(
     ))
 }
 
-// pub async fn get_multiple_token_accounts(
-//     client: &RpcClient,
-//     accounts_addresses: Vec<Pubkey>,
-// ) -> Result<Vec<Option<Account>>, eyre::Error> {
-//     client
-//         .get_multiple_accounts_with_config(
-//             &accounts_addresses,
-//             RpcAccountInfoConfig {
-//                 encoding: Some(UiAccountEncoding::Base64Zstd),
-//                 commitment: Some(CommitmentConfig::processed()),
-//                 data_slice: None,
-//                 min_context_slot: None,
-//             },
-//         )
-//         .await
-// }
-
 fn get_program_rpc(rpc: Arc<RpcClient>) -> Arc<dyn ProgramClient<ProgramRpcClientSendTransaction>> {
     let program_client: Arc<dyn ProgramClient<ProgramRpcClientSendTransaction>> = Arc::new(
         ProgramRpcClient::new(rpc.clone(), ProgramRpcClientSendTransaction),
@@ -262,21 +234,4 @@ pub async fn get_transaction_from_signature(
 
     let transaction = get_transaction_result.unwrap();
     Ok(transaction)
-}
-
-pub async fn get_sol_price() -> Result<f64, eyre::Error> {
-    let res = reqwest::get(COINGECKO_SOLANA_PRICE_API_URL).await?;
-    let price_response: CoinGeckoSolanaPriceResponse = serde_json::from_str(&res.text().await?)?;
-
-    Ok(price_response.solana.usd)
-}
-
-#[derive(Deserialize, Debug)]
-pub struct CoinGeckoSolanaPriceResponse {
-    pub solana: USDPrice,
-}
-
-#[derive(Deserialize, Debug)]
-pub struct USDPrice {
-    pub usd: f64,
 }

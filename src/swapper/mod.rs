@@ -29,42 +29,6 @@ pub struct Swapper {
 }
 
 impl Swapper {
-    pub async fn new_from_pool_initialization_params(
-        client: Arc<RpcClient>,
-        config: ProgramConfig,
-        amm_id: Pubkey,
-        market_id: Pubkey,
-    ) -> Self {
-        let user_keypair = Keypair::from_base58_string(&config.buyer_private_key);
-
-        let (pool_info, market_info) = get_pool_and_market_info(&client, &amm_id, &market_id).await;
-
-        let associated_authority =
-            get_associated_authority(pool_info.market_program_id, pool_info.market_id).unwrap();
-
-        let (user_base_token_account, user_quote_token_account, account_to_create) =
-            get_user_token_accounts(
-                &client,
-                &user_keypair,
-                pool_info.base_mint,
-                pool_info.quote_mint,
-            )
-            .await
-            .unwrap();
-
-        Self {
-            client,
-            user_keypair,
-            pool_info,
-            amm_id,
-            user_base_token_account,
-            user_quote_token_account,
-            market_info,
-            associated_authority,
-            account_to_create,
-        }
-    }
-
     pub async fn new(client: Arc<RpcClient>, market_id: Pubkey, config: ProgramConfig) -> Self {
         let user_keypair = Keypair::from_base58_string(&config.buyer_private_key);
 
@@ -104,6 +68,42 @@ impl Swapper {
         }
     }
 
+    pub async fn from_pool_params(
+        client: Arc<RpcClient>,
+        config: ProgramConfig,
+        amm_id: Pubkey,
+        market_id: Pubkey,
+    ) -> Self {
+        let user_keypair = Keypair::from_base58_string(&config.buyer_private_key);
+
+        let (pool_info, market_info) = get_pool_and_market_info(&client, &amm_id, &market_id).await;
+
+        let associated_authority =
+            get_associated_authority(pool_info.market_program_id, pool_info.market_id).unwrap();
+
+        let (user_base_token_account, user_quote_token_account, account_to_create) =
+            get_user_token_accounts(
+                &client,
+                &user_keypair,
+                pool_info.base_mint,
+                pool_info.quote_mint,
+            )
+            .await
+            .unwrap();
+
+        Self {
+            client,
+            user_keypair,
+            pool_info,
+            amm_id,
+            user_base_token_account,
+            user_quote_token_account,
+            market_info,
+            associated_authority,
+            account_to_create,
+        }
+    }
+
     pub async fn swap(&self, in_token: &Pubkey, amount_in: f64) {
         let mut instructions = vec![];
         let (user_out_token_account, user_in_token_account) =
@@ -114,7 +114,7 @@ impl Swapper {
             };
 
         let (compute_unit_limit_instruction, compute_unit_price_instruction) =
-            get_prio_fee_instructions(&self.client).await;
+            get_prio_fee_instructions();
         instructions.push(compute_unit_limit_instruction);
         instructions.push(compute_unit_price_instruction);
 

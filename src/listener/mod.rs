@@ -56,9 +56,7 @@ impl Listener {
                 continue;
             }
 
-            let potential_values = self
-                .get_market_id_and_amm_id_from_subscribe_logs(potential_log.unwrap())
-                .await;
+            let potential_values = self.get_market_id_and_amm_id(potential_log.unwrap()).await;
             if potential_values.is_err() {
                 log::debug!("error with log: {:?}", potential_values.unwrap_err());
                 continue;
@@ -74,23 +72,17 @@ impl Listener {
             amm_id
         );
 
-        self.launch_swapper(amm_id, market_id).await;
+        self.swap(amm_id, market_id).await;
     }
 
-    async fn launch_swapper(self, amm_id: Pubkey, market_id: Pubkey) {
-        let swapper = Swapper::new_from_pool_initialization_params(
-            self.client,
-            self.config,
-            amm_id,
-            market_id,
-        )
-        .await;
+    async fn swap(self, amm_id: Pubkey, market_id: Pubkey) {
+        let swapper = Swapper::from_pool_params(self.client, self.config, amm_id, market_id).await;
         swapper
             .swap(&Pubkey::from_str(WSOL_ADDRESS).unwrap(), 0.001)
             .await;
     }
 
-    async fn get_market_id_and_amm_id_from_subscribe_logs(
+    async fn get_market_id_and_amm_id(
         &self,
         log: LogsSubscribeResponse,
     ) -> Result<(Pubkey, Pubkey), eyre::Error> {
@@ -111,7 +103,7 @@ impl Listener {
         )
         .await?;
 
-        let account_keys = Self::get_account_keys_from_transaction(pool_creation_tx)?;
+        let account_keys = Self::get_account_keys(pool_creation_tx)?;
 
         Self::get_market_id_amm_id_from_account_keys(account_keys)
     }
@@ -120,17 +112,11 @@ impl Listener {
         let signature = log.params.result.value.signature;
         log::debug!("signature {:?}", signature);
 
-        let signature = Signature::from_str(&signature);
-        if signature.is_err() {
-            return Err(eyre!(
-                "Failed to create signature object from signature received: {:?}",
-                signature.err()
-            ));
-        }
-        Ok(signature.unwrap())
+        let signature = Signature::from_str(&signature)?;
+        Ok(signature)
     }
 
-    fn get_account_keys_from_transaction(
+    fn get_account_keys(
         tx: EncodedConfirmedTransactionWithStatusMeta,
     ) -> Result<Vec<String>, eyre::Error> {
         let ui_message = match tx.transaction.transaction {
@@ -156,20 +142,11 @@ impl Listener {
         mut account_keys: Vec<String>,
     ) -> Result<(Pubkey, Pubkey), eyre::Error> {
         let market_id = account_keys.pop().unwrap();
-        let market_id = Pubkey::from_str(&market_id);
-        if market_id.is_err() {
-            return Err(eyre!(
-                "Invalid market_id as public key: {:?}",
-                market_id.err()
-            ));
-        }
+        let market_id = Pubkey::from_str(&market_id)?;
 
         let amm_id = account_keys.remove(2);
-        let amm_id = Pubkey::from_str(&amm_id);
-        if market_id.is_err() {
-            return Err(eyre!("Invalid amm_id as public key: {:?}", amm_id.err()));
-        }
+        let amm_id = Pubkey::from_str(&amm_id)?;
 
-        Ok((market_id.unwrap(), amm_id.unwrap()))
+        Ok((market_id, amm_id))
     }
 }
