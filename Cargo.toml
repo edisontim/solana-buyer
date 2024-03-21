@@ -11,7 +11,7 @@ solana-sdk = { version = "1.10.0", default-features = false }
 solana-client = { version = "1.10.0", default-features = false }
 solana-transaction-status = { version = "1.18.5", default-features = false }
 solana-account-decoder = { version = "1.18.5", default-features = false }
-eyre = { version = "0.6.12", default-features = false }
+eyre = { version = "0.6.12" }
 spl-token-client = { version = "0.8.0", default-features = false }
 tokio = { version = "1.36.0", default-features = false }
 spl-token = { version = "4.0.0", default-features = false }
@@ -21,7 +21,7 @@ arrayref = { version = "0.3.7", default-features = false }
 raydium-contract-instructions = { git = "http://github.com/raydium-io/raydium-contract-instructions.git", rev = "8710befa6d900a15b03a2fadb8a7caa0a91cfbdb", default-features = false }
 spl-associated-token-account = { version = "2.3.0", default-features = false }
 clap = { version = "4.5.2", features = ["derive"] }
-serde = { version = "1.0.197", default-features = false}
+serde = { version = "1.0.197", default-features = false, features = ["derive"]}
 envy = { version = "0.4.2", default-features = false }
 dotenvy = { version = "0.15.7", default-features = false }
 crossbeam = { version = "0.8.4", default-features = false }
@@ -30,3 +30,4 @@ tungstenite = { version = "0.21.0", features = ["native-tls"] }
 serde_json = { version = "1.0.114", default-features = false }
 log = { version = "0.4.21", default-features = false }
 env_logger = { version = "0.8", default-features = false }
+reqwest = "0.12.0"

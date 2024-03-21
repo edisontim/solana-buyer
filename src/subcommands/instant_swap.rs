@@ -5,6 +5,7 @@ use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::pubkey::Pubkey;
 
 use crate::{swapper::Swapper, types::ProgramConfig, utils::get_market_id};
+
 #[derive(Debug, Args)]
 pub struct InstantSwapSubcommand {
     /// Input token address

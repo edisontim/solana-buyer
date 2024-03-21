@@ -1,12 +1,8 @@
 use raydium_contract_instructions::amm_instruction as amm;
 use solana_client::{nonblocking::rpc_client::RpcClient, rpc_config::RpcSendTransactionConfig};
 use solana_sdk::{
-    commitment_config::{CommitmentConfig, CommitmentLevel},
-    instruction::Instruction,
-    pubkey::Pubkey,
-    signature::Keypair,
-    signer::Signer,
-    transaction::Transaction,
+    commitment_config::CommitmentConfig, instruction::Instruction, pubkey::Pubkey,
+    signature::Keypair, signer::Signer, transaction::Transaction,
 };
 use spl_associated_token_account::instruction::create_associated_token_account;
 use std::sync::Arc;
@@ -110,19 +106,11 @@ impl Swapper {
 
     pub async fn swap(&self, in_token: &Pubkey, amount_in: f64) {
         let mut instructions = vec![];
-        let (out_token, user_out_token_account, user_in_token_account) =
+        let (user_out_token_account, user_in_token_account) =
             if *in_token == self.pool_info.base_mint {
-                (
-                    self.pool_info.quote_mint,
-                    self.user_quote_token_account,
-                    self.user_base_token_account,
-                )
+                (self.user_quote_token_account, self.user_base_token_account)
             } else {
-                (
-                    self.pool_info.base_mint,
-                    self.user_base_token_account,
-                    self.user_quote_token_account,
-                )
+                (self.user_base_token_account, self.user_quote_token_account)
             };
 
         let (compute_unit_limit_instruction, compute_unit_price_instruction) =
@@ -134,7 +122,7 @@ impl Swapper {
             let associated_token_account_create_instruction = create_associated_token_account(
                 &self.user_keypair.pubkey(),
                 &self.user_keypair.pubkey(),
-                &out_token,
+                &self.account_to_create.unwrap(),
                 &TOKEN_PROGRAM,
             );
             instructions.push(associated_token_account_create_instruction);
@@ -144,9 +132,7 @@ impl Swapper {
             .client
             .get_token_account_balance_with_commitment(
                 &self.pool_info.base_vault,
-                CommitmentConfig {
-                    commitment: CommitmentLevel::Processed,
-                },
+                CommitmentConfig::confirmed(),
             )
             .await
             .unwrap()
@@ -156,9 +142,7 @@ impl Swapper {
             .client
             .get_token_account_balance_with_commitment(
                 &self.pool_info.quote_vault,
-                CommitmentConfig {
-                    commitment: CommitmentLevel::Processed,
-                },
+                CommitmentConfig::confirmed(),
             )
             .await
             .unwrap()
@@ -186,6 +170,11 @@ impl Swapper {
                 in_token_balance,
             )
         };
+        log::debug!(
+            "user_in_token_account {} user_out_token_account {}",
+            user_in_token_account,
+            user_out_token_account
+        );
         log::debug!("swap base in: {} for minimum 0 out", amount_in);
         let instruction = self.build_swap_base_in_instruction(
             amount_in,

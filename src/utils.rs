@@ -1,4 +1,5 @@
 use eyre::eyre;
+use serde::Deserialize;
 use solana_account_decoder::UiAccountEncoding;
 use solana_sdk::{
     commitment_config::CommitmentConfig,
@@ -11,7 +12,7 @@ use solana_sdk::{
 use solana_transaction_status::EncodedConfirmedTransactionWithStatusMeta;
 
 use crate::{
-    constants::OPENBOOK,
+    constants::{COINGECKO_SOLANA_PRICE_API_URL, OPENBOOK},
     types::{MarketInfo, PoolInfo},
 };
 
@@ -49,7 +50,7 @@ pub async fn get_prio_fee_instructions(client: &RpcClient) -> (Instruction, Inst
         .fold(0, |acc, x| acc + x.prioritization_fee);
     let mut average_prio_fee = total_fees / recent_prio_fees.len() as u64;
     if average_prio_fee < 100_000 {
-        average_prio_fee = 400_000;
+        average_prio_fee = 130_000;
     }
     log::debug!("avg prio fee {:?}", average_prio_fee);
     let compute_unit_limit_instruction = ComputeBudgetInstruction::set_compute_unit_limit(70_000);
@@ -261,4 +262,21 @@ pub async fn get_transaction_from_signature(
 
     let transaction = get_transaction_result.unwrap();
     Ok(transaction)
+}
+
+pub async fn get_sol_price() -> Result<f64, eyre::Error> {
+    let res = reqwest::get(COINGECKO_SOLANA_PRICE_API_URL).await?;
+    let price_response: CoinGeckoSolanaPriceResponse = serde_json::from_str(&res.text().await?)?;
+
+    Ok(price_response.solana.usd)
+}
+
+#[derive(Deserialize, Debug)]
+pub struct CoinGeckoSolanaPriceResponse {
+    pub solana: USDPrice,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct USDPrice {
+    pub usd: f64,
 }
