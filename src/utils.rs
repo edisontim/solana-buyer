@@ -9,6 +9,7 @@ use solana_sdk::{
     signer::Signer,
 };
 use solana_transaction_status::EncodedConfirmedTransactionWithStatusMeta;
+use spl_associated_token_account::get_associated_token_address;
 
 use crate::{
     constants::OPENBOOK,
@@ -20,11 +21,6 @@ use solana_client::{
     nonblocking::rpc_client::RpcClient,
     rpc_config::{RpcAccountInfoConfig, RpcProgramAccountsConfig, RpcTransactionConfig},
     rpc_filter::{Memcmp, MemcmpEncodedBytes, RpcFilterType},
-};
-
-use spl_token_client::{
-    client::{ProgramClient, ProgramRpcClient, ProgramRpcClientSendTransaction},
-    token::{Token, TokenError},
 };
 
 use std::sync::Arc;
@@ -106,62 +102,44 @@ pub async fn get_user_token_accounts(
     quote_token: Pubkey,
 ) -> Result<(Pubkey, Pubkey, Option<Pubkey>), eyre::Error> {
     let mut account_to_create: Option<Pubkey> = None;
-    let user = user_keypair.pubkey();
 
-    let program_client = get_program_rpc(Arc::clone(client));
-    let base_token_client = Token::new(
-        Arc::clone(&program_client),
-        &spl_token::ID,
-        &base_token,
-        None,
-        Arc::new(Keypair::from_bytes(&user_keypair.to_bytes()).expect("failed to copy keypair")),
-    );
-    let quote_token_client = Token::new(
-        Arc::clone(&program_client),
-        &spl_token::ID,
-        &quote_token,
-        None,
-        Arc::new(Keypair::from_bytes(&user_keypair.to_bytes()).expect("failed to copy keypair")),
-    );
+    let user_base_token_account = get_associated_token_address(&user_keypair.pubkey(), &base_token);
+    let user_quote_token_account =
+        get_associated_token_address(&user_keypair.pubkey(), &quote_token);
 
-    let user_base_token_account = base_token_client.get_associated_token_address(&user);
-    match base_token_client
-        .get_account_info(&user_base_token_account)
-        .await
-    {
-        Ok(_) => log::debug!("User's ATA for base token exists. Skipping creation.."),
-        Err(TokenError::AccountNotFound) | Err(TokenError::AccountInvalidOwner) => {
+    let mut user_token_accounts = client
+        .get_multiple_accounts_with_config(
+            &[user_base_token_account, user_quote_token_account],
+            RpcAccountInfoConfig {
+                commitment: Some(CommitmentConfig::processed()),
+                ..RpcAccountInfoConfig::default()
+            },
+        )
+        .await?
+        .value;
+
+    match user_token_accounts.swap_remove(0) {
+        Some(_) => log::debug!("User's ATA for base token exists. Skipping creation.."),
+        None => {
             log::debug!("User's ATA for base token does not exist. Creating..");
             account_to_create = Some(base_token);
         }
-        Err(error) => log::error!("Error retrieving user's base-tokens ATA: {}", error),
     };
 
-    let user_quote_token_account = quote_token_client.get_associated_token_address(&user);
-    match quote_token_client
-        .get_account_info(&user_quote_token_account)
-        .await
-    {
-        Ok(_) => log::debug!("User's ATA for quote tokens exists. Skipping creation.."),
-        Err(TokenError::AccountNotFound) | Err(TokenError::AccountInvalidOwner) => {
+    match user_token_accounts.swap_remove(0) {
+        Some(_) => log::debug!("User's ATA for quote tokens exists. Skipping creation.."),
+        None => {
             log::debug!("User's ATA for quote token does not exist. Creating..");
             account_to_create = Some(quote_token);
         }
-        Err(error) => log::error!("Error retrieving user's quote-tokens ATA: {}", error),
     }
+
     log::debug!("account to create: {:?}", account_to_create);
     Ok((
         user_base_token_account,
         user_quote_token_account,
         account_to_create,
     ))
-}
-
-fn get_program_rpc(rpc: Arc<RpcClient>) -> Arc<dyn ProgramClient<ProgramRpcClientSendTransaction>> {
-    let program_client: Arc<dyn ProgramClient<ProgramRpcClientSendTransaction>> = Arc::new(
-        ProgramRpcClient::new(rpc.clone(), ProgramRpcClientSendTransaction),
-    );
-    program_client
 }
 
 /// Fetches the serum marketID of the pool
