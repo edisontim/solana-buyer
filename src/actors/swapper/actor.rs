@@ -1,3 +1,8 @@
+use std::sync::Arc;
+
+use async_trait::async_trait;
+use coerce::actor::context::ActorContext;
+use coerce::actor::Actor;
 use raydium_contract_instructions::amm_instruction as amm;
 use solana_client::{nonblocking::rpc_client::RpcClient, rpc_config::RpcSendTransactionConfig};
 use solana_sdk::{
@@ -5,14 +10,13 @@ use solana_sdk::{
     signature::Keypair, signer::Signer, transaction::Transaction,
 };
 use spl_associated_token_account::instruction::create_associated_token_account;
-use std::sync::Arc;
 
 use crate::{
     constants::{AMM_V4, RAYDIUM_AUTHORITY_V4, TOKEN_PROGRAM},
     types::{MarketInfo, PoolInfo, ProgramConfig},
     utils::{
-        get_associated_authority, get_market_info, get_pool_and_market_info, get_pool_info,
-        get_prio_fee_instructions, get_user_token_accounts,
+        get_associated_authority, get_pool_and_market_info, get_prio_fee_instructions,
+        get_user_token_accounts,
     },
 };
 
@@ -28,44 +32,24 @@ pub struct Swapper {
     account_to_create: Option<Pubkey>,
 }
 
+/// Implements the actor trait for the swapper
+#[async_trait]
+impl Actor for Swapper {
+    #[tracing::instrument(skip_all)]
+    async fn started(&mut self, _ctx: &mut ActorContext) {
+        tracing::info!("Swapper now running!");
+    }
+}
+
 impl Swapper {
     pub async fn new(client: Arc<RpcClient>, market_id: Pubkey, config: ProgramConfig) -> Self {
-        let user_keypair = Keypair::from_base58_string(&config.buyer_private_key);
-
         let amm_id = Pubkey::find_program_address(
             &[AMM_V4.as_ref(), market_id.as_ref(), b"amm_associated_seed"],
             &AMM_V4,
         )
         .0;
 
-        let pool_info = get_pool_info(&client, &amm_id).await;
-
-        let associated_authority =
-            get_associated_authority(pool_info.market_program_id, pool_info.market_id).unwrap();
-
-        let market_info = get_market_info(&client, &pool_info.market_id).await;
-
-        let (user_base_token_account, user_quote_token_account, account_to_create) =
-            get_user_token_accounts(
-                &client,
-                &user_keypair,
-                pool_info.base_mint,
-                pool_info.quote_mint,
-            )
-            .await
-            .unwrap();
-
-        Self {
-            client,
-            user_keypair,
-            pool_info,
-            amm_id,
-            user_base_token_account,
-            user_quote_token_account,
-            market_info,
-            associated_authority,
-            account_to_create,
-        }
+        Swapper::from_pool_params(client, config, amm_id, market_id).await
     }
 
     pub async fn from_pool_params(
@@ -170,12 +154,12 @@ impl Swapper {
                 in_token_balance,
             )
         };
-        log::debug!(
+        tracing::debug!(
             "user_in_token_account {} user_out_token_account {}",
             user_in_token_account,
             user_out_token_account
         );
-        log::debug!("swap base in: {} for minimum 0 out", amount_in);
+        tracing::debug!("swap base in: {} for minimum 0 out", amount_in);
         let instruction = self.build_swap_base_in_instruction(
             amount_in,
             0.,
@@ -257,7 +241,7 @@ impl Swapper {
             )
             .await
         {
-            log::error!("Failed to send transaction: {:?}", e);
+            tracing::error!("Failed to send transaction: {:?}", e);
         };
     }
 }

@@ -4,7 +4,7 @@ use clap::Args;
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::pubkey::Pubkey;
 
-use crate::{swapper::Swapper, types::ProgramConfig, utils::get_market_id};
+use crate::{actors::swapper::actor::Swapper, types::ProgramConfig, utils::get_market_id};
 
 #[derive(Debug, Args)]
 pub struct InstantSwapSubcommand {
@@ -39,7 +39,7 @@ impl InstantSwapSubcommand {
             )
             .await;
 
-        log::info!("sell how much?");
+        tracing::info!("sell how much?");
         let mut amount = String::new();
         let _ = std::io::stdin().read_line(&mut amount).unwrap();
         let amount_in: f64 = amount.trim().parse().unwrap();

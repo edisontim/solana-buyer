@@ -87,7 +87,7 @@ pub struct MarketInfo {
     pub blob_1: [u8; 7],
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Clone)]
 pub struct ProgramConfig {
     pub ws_rpc_url: String,
     pub http_rpc_url: String,
