@@ -1,3 +1,4 @@
+#![allow(clippy::blocks_in_conditions)]
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -32,7 +33,9 @@ message!(SpawnSwapper, Result<(), eyre::Error>);
 
 #[async_trait]
 impl Handler<SpawnSwapper> for Listener {
-    // #[tracing::instrument(skip_all, err)]
+    /// Handle a spawn swapper message, spawning a new swapper actor
+    /// as a child of the listener.
+    #[tracing::instrument(skip_all, err)]
     async fn handle(
         &mut self,
         message: SpawnSwapper,
@@ -64,14 +67,14 @@ impl Handler<SpawnSwapper> for Listener {
 /// Implements the actor trait for the listener
 #[async_trait]
 impl Actor for Listener {
+    /// Start the listener actor and start listening for logs
     #[tracing::instrument(skip_all)]
     async fn started(&mut self, ctx: &mut ActorContext) {
         tracing::info!("listener");
-
-        // Listen to the current pending transactions
         self.listen(ctx);
     }
 
+    /// Handle a child stopped event
     #[tracing::instrument(skip_all, fields(id = %_id))]
     async fn on_child_stopped(&mut self, _id: &ActorId, _ctx: &mut ActorContext) {
         tracing::info!("listener child stopped");
