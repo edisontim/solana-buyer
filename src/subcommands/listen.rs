@@ -14,14 +14,18 @@ use crate::{
 static NOTIFY: Lazy<Arc<Notify>> = Lazy::new(|| Arc::new(Notify::new()));
 
 #[derive(Debug, Args)]
-pub struct ListenSubcommand;
+pub struct ListenSubcommand {
+    /// Input max swappers
+    #[arg(short, long)]
+    #[arg(default_value = "1")]
+    max_swappers: u8,
+}
 
 impl ListenSubcommand {
     pub async fn run(self, client: Arc<RpcClient>, config: ProgramConfig) {
-        // Init the actor system
         let system = ActorSystem::new();
 
-        let listener = Listener::new(client, config)
+        let listener = Listener::new(client, config, self.max_swappers)
             .into_actor(Some("listener".to_string()), &system)
             .await
             .expect("failed to start listener");
@@ -33,7 +37,6 @@ impl ListenSubcommand {
             .await
             .expect("failed to start guard");
 
-        // Wait for the notification
         NOTIFY.notified().await;
         guard.stop().await.expect("failed to stop guard");
     }

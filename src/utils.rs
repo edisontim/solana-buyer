@@ -27,7 +27,6 @@ use crate::{
 };
 
 pub fn init_logging() {
-    // Initialize tracing
     let filter = if let Ok(filter) = std::env::var("RUST_LOG") {
         filter
     } else {
@@ -40,7 +39,7 @@ pub fn init_logging() {
 
 pub fn get_prio_fee_instructions() -> (Instruction, Instruction) {
     let prio_fee = 130_000;
-    tracing::debug!("avg prio fee {:?}", prio_fee);
+    tracing::debug!("priority fee {:?}", prio_fee);
     let compute_unit_limit_instruction = ComputeBudgetInstruction::set_compute_unit_limit(70_000);
     let compute_unit_price_instruction = ComputeBudgetInstruction::set_compute_unit_price(prio_fee);
     (
@@ -89,7 +88,7 @@ pub async fn get_pool_and_market_info(
     let market_account = rpc_response
         .value
         .pop()
-        .ok_or_eyre("market account not found")?
+        .flatten()
         .ok_or_eyre("market account not found")?;
     let market_info = MarketInfo::deserialize(&mut &market_account.data[..])?;
     Ok((pool_info, market_info))

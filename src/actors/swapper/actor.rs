@@ -33,7 +33,6 @@ pub struct Swapper {
     account_to_create: Option<Pubkey>,
 }
 
-/// Implements the actor trait for the swapper
 #[async_trait]
 impl Actor for Swapper {
     #[tracing::instrument(skip_all)]
