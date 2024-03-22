@@ -118,7 +118,7 @@ pub async fn get_user_token_accounts(
         .await?
         .value;
 
-    match user_token_accounts.remove(0) {
+    match user_token_accounts.swap_remove(0) {
         Some(_) => log::debug!("User's ATA for base token exists. Skipping creation.."),
         None => {
             log::debug!("User's ATA for base token does not exist. Creating..");
@@ -126,7 +126,7 @@ pub async fn get_user_token_accounts(
         }
     };
 
-    match user_token_accounts.remove(0) {
+    match user_token_accounts.swap_remove(0) {
         Some(_) => log::debug!("User's ATA for quote tokens exists. Skipping creation.."),
         None => {
             log::debug!("User's ATA for quote token does not exist. Creating..");
