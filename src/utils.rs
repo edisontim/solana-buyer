@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
 use borsh::BorshDeserialize;
-use eyre::eyre;
+use eyre::Result;
+use eyre::{eyre, OptionExt};
 use solana_account_decoder::UiAccountEncoding;
 use solana_client::{
     nonblocking::rpc_client::RpcClient,
@@ -66,7 +67,7 @@ pub async fn get_pool_and_market_info(
     client: &RpcClient,
     amm_id: &Pubkey,
     market_id: &Pubkey,
-) -> (PoolInfo, MarketInfo) {
+) -> Result<(PoolInfo, MarketInfo)> {
     let mut rpc_response = client
         .get_multiple_accounts_with_config(
             &[*amm_id, *market_id],
@@ -77,13 +78,21 @@ pub async fn get_pool_and_market_info(
                 ..RpcAccountInfoConfig::default()
             },
         )
-        .await
-        .unwrap();
-    let pool_account = rpc_response.value.remove(0).unwrap();
-    let pool_info = PoolInfo::deserialize(&mut &pool_account.data[..]).unwrap();
-    let market_account = rpc_response.value.pop().unwrap().unwrap();
-    let market_info = MarketInfo::deserialize(&mut &market_account.data[..]).unwrap();
-    (pool_info, market_info)
+        .await?;
+
+    let pool_account = rpc_response
+        .value
+        .remove(0)
+        .ok_or_eyre("pool account not found")?;
+
+    let pool_info = PoolInfo::deserialize(&mut &pool_account.data[..])?;
+    let market_account = rpc_response
+        .value
+        .pop()
+        .ok_or_eyre("market account not found")?
+        .ok_or_eyre("market account not found")?;
+    let market_info = MarketInfo::deserialize(&mut &market_account.data[..])?;
+    Ok((pool_info, market_info))
 }
 
 pub async fn get_user_token_accounts(

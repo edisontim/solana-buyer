@@ -30,7 +30,9 @@ impl InstantSwapSubcommand {
         )
         .await;
 
-        let swapper = Swapper::new(client, market_id, config).await;
+        let swapper = Swapper::new(client, market_id, config)
+            .await
+            .expect("failed to swap");
         swapper
             .swap(
                 &Pubkey::from_str(&self.input_token_address)

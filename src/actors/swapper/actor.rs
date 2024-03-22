@@ -3,6 +3,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use coerce::actor::context::ActorContext;
 use coerce::actor::Actor;
+use eyre::Result;
 use raydium_contract_instructions::amm_instruction as amm;
 use solana_client::{nonblocking::rpc_client::RpcClient, rpc_config::RpcSendTransactionConfig};
 use solana_sdk::{
@@ -42,7 +43,11 @@ impl Actor for Swapper {
 }
 
 impl Swapper {
-    pub async fn new(client: Arc<RpcClient>, market_id: Pubkey, config: ProgramConfig) -> Self {
+    pub async fn new(
+        client: Arc<RpcClient>,
+        market_id: Pubkey,
+        config: ProgramConfig,
+    ) -> Result<Self> {
         let amm_id = Pubkey::find_program_address(
             &[AMM_V4.as_ref(), market_id.as_ref(), b"amm_associated_seed"],
             &AMM_V4,
@@ -57,10 +62,11 @@ impl Swapper {
         config: ProgramConfig,
         amm_id: Pubkey,
         market_id: Pubkey,
-    ) -> Self {
+    ) -> Result<Self> {
         let user_keypair = Keypair::from_base58_string(&config.buyer_private_key);
 
-        let (pool_info, market_info) = get_pool_and_market_info(&client, &amm_id, &market_id).await;
+        let (pool_info, market_info) =
+            get_pool_and_market_info(&client, &amm_id, &market_id).await?;
 
         let associated_authority =
             get_associated_authority(pool_info.market_program_id, pool_info.market_id).unwrap();
@@ -75,7 +81,7 @@ impl Swapper {
             .await
             .unwrap();
 
-        Self {
+        Ok(Self {
             client,
             user_keypair,
             pool_info,
@@ -85,7 +91,7 @@ impl Swapper {
             market_info,
             associated_authority,
             account_to_create,
-        }
+        })
     }
 
     pub async fn swap(&self, in_token: &Pubkey, amount_in: f64) {

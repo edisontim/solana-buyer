@@ -44,7 +44,7 @@ impl Handler<SpawnSwapper> for Listener {
             message.0,
             message.1,
         )
-        .await;
+        .await?;
 
         let swapper_id = self.amount_swappers;
         ctx.spawn_deferred(format!("swapper-{}", swapper_id).into_actor_id(), swapper)?;
