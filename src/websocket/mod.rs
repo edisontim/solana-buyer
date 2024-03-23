@@ -38,7 +38,7 @@ impl WebSocket<Initialized> {
         loop {
             let read_result = self.socket.as_mut().unwrap().read();
             if read_result.is_err() {
-                log::warn!("Connection lost: {}", read_result.err().unwrap());
+                tracing::warn!("Connection lost: {}", read_result.err().unwrap());
                 let _ = self.socket.as_mut().unwrap().close(None);
                 let _ = self.socket.as_mut().unwrap().flush();
                 self.reconnect()?;
@@ -48,7 +48,7 @@ impl WebSocket<Initialized> {
             let msg = read_result.unwrap().to_string();
             let deserialize_result = serde_json::from_str::<T>(&msg);
             if deserialize_result.is_err() {
-                log::warn!(
+                tracing::warn!(
                     "Expected other type: found {:?}",
                     deserialize_result.unwrap()
                 );
@@ -130,7 +130,7 @@ fn attempt_connection(
         }
         let connection_result = connect(Url::parse(url).unwrap());
         if connection_result.is_err() {
-            log::warn!("Failed to connect websocket");
+            tracing::warn!("Failed to connect websocket");
             num_retries -= 1;
             continue;
         }
@@ -151,11 +151,11 @@ fn attempt_subscription(
         let subscription_result = subscribe(socket.borrow_mut(), subscription_string);
         match subscription_result {
             Ok(()) => {
-                log::debug!("Successfully subscribed to ws");
+                tracing::debug!("Successfully subscribed to ws");
                 return Ok(());
             }
             Err(e) => {
-                log::warn!("Failed to subscribe to ws: {}", e);
+                tracing::warn!("Failed to subscribe to ws: {}", e);
                 num_retries -= 1;
                 continue;
             }

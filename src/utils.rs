@@ -1,5 +1,14 @@
-use eyre::eyre;
+use std::sync::Arc;
+
+use borsh::BorshDeserialize;
+use eyre::Result;
+use eyre::{eyre, OptionExt};
 use solana_account_decoder::UiAccountEncoding;
+use solana_client::{
+    nonblocking::rpc_client::RpcClient,
+    rpc_config::{RpcAccountInfoConfig, RpcProgramAccountsConfig, RpcTransactionConfig},
+    rpc_filter::{Memcmp, MemcmpEncodedBytes, RpcFilterType},
+};
 use solana_sdk::{
     commitment_config::CommitmentConfig,
     compute_budget::ComputeBudgetInstruction,
@@ -10,35 +19,27 @@ use solana_sdk::{
 };
 use solana_transaction_status::EncodedConfirmedTransactionWithStatusMeta;
 use spl_associated_token_account::get_associated_token_address;
+use tracing_subscriber::{filter, FmtSubscriber};
 
 use crate::{
     constants::OPENBOOK,
     types::{MarketInfo, PoolInfo},
 };
 
-use borsh::BorshDeserialize;
-use solana_client::{
-    nonblocking::rpc_client::RpcClient,
-    rpc_config::{RpcAccountInfoConfig, RpcProgramAccountsConfig, RpcTransactionConfig},
-    rpc_filter::{Memcmp, MemcmpEncodedBytes, RpcFilterType},
-};
-
-use std::sync::Arc;
-
 pub fn init_logging() {
-    if std::env::var("RUST_LOG").is_ok() {
-        std::env::set_var(
-            "RUST_LOG",
-            "solana_buyer=".to_owned() + &std::env::var("RUST_LOG").unwrap(),
-        )
-    }
-
-    env_logger::init();
+    let filter = if let Ok(filter) = std::env::var("RUST_LOG") {
+        filter
+    } else {
+        "solana_buyer=info".to_string()
+    };
+    let filter = filter::EnvFilter::new(filter);
+    let subscriber = FmtSubscriber::builder().with_env_filter(filter).finish();
+    tracing::subscriber::set_global_default(subscriber).expect("setting tracing default failed");
 }
 
 pub fn get_prio_fee_instructions() -> (Instruction, Instruction) {
     let prio_fee = 130_000;
-    log::debug!("avg prio fee {:?}", prio_fee);
+    tracing::debug!("priority fee {:?}", prio_fee);
     let compute_unit_limit_instruction = ComputeBudgetInstruction::set_compute_unit_limit(70_000);
     let compute_unit_price_instruction = ComputeBudgetInstruction::set_compute_unit_price(prio_fee);
     (
@@ -65,7 +66,7 @@ pub async fn get_pool_and_market_info(
     client: &RpcClient,
     amm_id: &Pubkey,
     market_id: &Pubkey,
-) -> (PoolInfo, MarketInfo) {
+) -> Result<(PoolInfo, MarketInfo)> {
     let mut rpc_response = client
         .get_multiple_accounts_with_config(
             &[*amm_id, *market_id],
@@ -76,23 +77,21 @@ pub async fn get_pool_and_market_info(
                 ..RpcAccountInfoConfig::default()
             },
         )
-        .await
-        .unwrap();
-    let pool_account = rpc_response.value.remove(0).unwrap();
-    let pool_info = PoolInfo::deserialize(&mut &pool_account.data[..]).unwrap();
-    let market_account = rpc_response.value.pop().unwrap().unwrap();
-    let market_info = MarketInfo::deserialize(&mut &market_account.data[..]).unwrap();
-    (pool_info, market_info)
-}
+        .await?;
 
-pub async fn get_pool_info(client: &RpcClient, amm_id: &Pubkey) -> PoolInfo {
-    let pool_info = client.get_account_data(amm_id).await.unwrap();
-    PoolInfo::deserialize(&mut &pool_info[..]).unwrap()
-}
+    let pool_account = rpc_response
+        .value
+        .remove(0)
+        .ok_or_eyre("pool account not found")?;
 
-pub async fn get_market_info(client: &RpcClient, market_id: &Pubkey) -> MarketInfo {
-    let market_info = client.get_account_data(market_id).await.unwrap();
-    MarketInfo::deserialize(&mut &market_info[..]).unwrap()
+    let pool_info = PoolInfo::deserialize(&mut &pool_account.data[..])?;
+    let market_account = rpc_response
+        .value
+        .pop()
+        .flatten()
+        .ok_or_eyre("market account not found")?;
+    let market_info = MarketInfo::deserialize(&mut &market_account.data[..])?;
+    Ok((pool_info, market_info))
 }
 
 pub async fn get_user_token_accounts(
@@ -119,22 +118,22 @@ pub async fn get_user_token_accounts(
         .value;
 
     match user_token_accounts.swap_remove(0) {
-        Some(_) => log::debug!("User's ATA for base token exists. Skipping creation.."),
+        Some(_) => tracing::debug!("User's ATA for base token exists. Skipping creation.."),
         None => {
-            log::debug!("User's ATA for base token does not exist. Creating..");
+            tracing::debug!("User's ATA for base token does not exist. Creating..");
             account_to_create = Some(base_token);
         }
     };
 
     match user_token_accounts.swap_remove(0) {
-        Some(_) => log::debug!("User's ATA for quote tokens exists. Skipping creation.."),
+        Some(_) => tracing::debug!("User's ATA for quote tokens exists. Skipping creation.."),
         None => {
-            log::debug!("User's ATA for quote token does not exist. Creating..");
+            tracing::debug!("User's ATA for quote token does not exist. Creating..");
             account_to_create = Some(quote_token);
         }
     }
 
-    log::debug!("account to create: {:?}", account_to_create);
+    tracing::debug!("account to create: {:?}", account_to_create);
     Ok((
         user_base_token_account,
         user_quote_token_account,
