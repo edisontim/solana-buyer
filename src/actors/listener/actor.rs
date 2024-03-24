@@ -24,8 +24,8 @@ use crate::{
 pub struct Listener {
     config: ProgramConfig,
     client: Arc<RpcClient>,
-    amount_swappers: u8,
     max_swappers: u8,
+    trade_amount: f64,
 }
 
 #[derive(Debug, Clone)]
@@ -40,7 +40,8 @@ impl Handler<SpawnSwapper> for Listener {
         message: SpawnSwapper,
         ctx: &mut ActorContext,
     ) -> Result<(), eyre::Error> {
-        if self.amount_swappers >= self.max_swappers {
+        let amount_swappers = ctx.supervised_count();
+        if amount_swappers >= self.max_swappers as usize {
             tracing::debug!("max swappers reached");
             return Ok(());
         }
@@ -50,20 +51,24 @@ impl Handler<SpawnSwapper> for Listener {
             self.config.clone(),
             message.0,
             message.1,
+            self.trade_amount,
         )
         .await?;
 
-        let swapper_id = self.amount_swappers;
-        ctx.spawn_deferred(format!("swapper-{}", swapper_id).into_actor_id(), swapper)?;
-
+        let id = format!(
+            "swapper-{}{}",
+            &message.0.to_string()[..6],
+            &message.1.to_string()[..6]
+        );
         tracing::info!(
             "spawned swapper with id {}, market id {:?} and amm id {:?}",
-            swapper_id,
+            id,
             message.0,
             message.1
         );
 
-        self.amount_swappers += 1;
+        ctx.spawn_deferred(id.into_actor_id(), swapper)?;
+
         Ok(())
     }
 }
@@ -80,18 +85,21 @@ impl Actor for Listener {
     #[tracing::instrument(skip_all, fields(id = %_id))]
     async fn on_child_stopped(&mut self, _id: &ActorId, _ctx: &mut ActorContext) {
         tracing::info!("listener child stopped");
-
-        self.amount_swappers -= 1;
     }
 }
 
 impl Listener {
-    pub fn new(client: Arc<RpcClient>, config: ProgramConfig, max_swappers: u8) -> Self {
+    pub fn new(
+        client: Arc<RpcClient>,
+        config: ProgramConfig,
+        max_swappers: u8,
+        trade_amount: f64,
+    ) -> Self {
         Self {
             client,
             config,
-            amount_swappers: 0,
             max_swappers,
+            trade_amount,
         }
     }
 

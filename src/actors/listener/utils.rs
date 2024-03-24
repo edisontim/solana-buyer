@@ -19,7 +19,7 @@ pub(super) async fn get_market_id_and_amm_id(
     log: LogsSubscribeResponse,
 ) -> Result<(Pubkey, Pubkey), eyre::Error> {
     if log.params.result.value.err.is_some() {
-        return Err(eyre!("Received transaction is a reverted tx"));
+        return Err(eyre!("received transaction is a reverted tx"));
     }
 
     let signature = get_transaction_signature(log)?;
