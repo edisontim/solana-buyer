@@ -39,7 +39,8 @@ impl InstantSwapSubcommand {
                     .expect("Enter correct input token address"),
                 self.amount_in,
             )
-            .await;
+            .await
+            .expect("failed to swap");
 
         tracing::info!("sell how much?");
         let mut amount = String::new();
@@ -52,6 +53,7 @@ impl InstantSwapSubcommand {
                     .expect("Enter correct output token address"),
                 amount_in,
             )
-            .await;
+            .await
+            .expect("failed to swap");
     }
 }

@@ -23,6 +23,7 @@ lazy_static! {
     pub static ref SOL: Pubkey = Pubkey::from_str(WSOL_ADDRESS).unwrap();
     pub static ref MIN_LIQUIDITY: u64 = 25_000_000_000; // 25 billion lamports ~ 4200$
     pub static ref MAX_LIQUIDITY: u64 = 150_000_000_000; // 150 billion lamports ~ 25000$
+    pub static ref LAMPORTS_PER_SOL: f64 = 1_000_000_000.;
 }
 
 pub const AMM_ID_INDEX_IN_INIT_INSTRUCTION: usize = 4;
