@@ -3449,6 +3449,7 @@ dependencies = [
  "dotenvy",
  "envy",
  "eyre",
+ "futures-util",
  "lazy_static",
  "once_cell",
  "raydium-contract-instructions",
@@ -3462,9 +3463,9 @@ dependencies = [
  "spl-associated-token-account 2.3.0",
  "spl-token 4.0.0",
  "tokio",
+ "tokio-tungstenite 0.21.0",
  "tracing",
  "tracing-subscriber",
- "tungstenite 0.21.0",
  "url",
 ]
 
@@ -3781,7 +3782,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "tokio-stream",
- "tokio-tungstenite",
+ "tokio-tungstenite 0.20.1",
  "tungstenite 0.20.1",
  "url",
 ]
@@ -4720,6 +4721,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "tokio-native-tls"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bbae76ab933c85776efabc971569dd6119c580d8f5d448769dec1764bf796ef2"
+dependencies = [
+ "native-tls",
+ "tokio",
+]
+
+[[package]]
 name = "tokio-rustls"
 version = "0.24.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4753,6 +4764,20 @@ dependencies = [
  "tokio-rustls",
  "tungstenite 0.20.1",
  "webpki-roots 0.25.4",
+]
+
+[[package]]
+name = "tokio-tungstenite"
+version = "0.21.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c83b561d025642014097b66e6c1bb422783339e0909e4429cde4749d1990bc38"
+dependencies = [
+ "futures-util",
+ "log",
+ "native-tls",
+ "tokio",
+ "tokio-native-tls",
+ "tungstenite 0.21.0",
 ]
 
 [[package]]

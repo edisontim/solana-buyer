@@ -7,8 +7,12 @@ use eyre::Result;
 use raydium_contract_instructions::amm_instruction as amm;
 use solana_client::{nonblocking::rpc_client::RpcClient, rpc_config::RpcSendTransactionConfig};
 use solana_sdk::{
-    commitment_config::CommitmentConfig, instruction::Instruction, pubkey::Pubkey,
-    signature::Keypair, signer::Signer, transaction::Transaction,
+    commitment_config::{CommitmentConfig, CommitmentLevel},
+    instruction::Instruction,
+    pubkey::Pubkey,
+    signature::Keypair,
+    signer::Signer,
+    transaction::Transaction,
 };
 use spl_associated_token_account::instruction::create_associated_token_account;
 
@@ -16,8 +20,8 @@ use crate::{
     constants::{AMM_V4, MAX_LIQUIDITY, MIN_LIQUIDITY, RAYDIUM_AUTHORITY_V4, SOL, TOKEN_PROGRAM},
     types::{MarketInfo, PoolInfo, ProgramConfig},
     utils::{
-        get_associated_authority, get_pool_and_market_info, get_prio_fee_instructions,
-        get_token_account, get_user_token_accounts,
+        get_accounts_for_swap, get_associated_authority, get_pool_and_market_info,
+        get_prio_fee_instructions, get_token_account,
     },
 };
 
@@ -32,6 +36,14 @@ pub struct Swapper {
     associated_authority: Pubkey,
     account_to_create: Option<Pubkey>,
     trade_amount: f64,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct PoolInitTxInfos {
+    pub amm_id: Pubkey,
+    pub market_id: Pubkey,
+    pub base_mint: Pubkey,
+    pub quote_mint: Pubkey,
 }
 
 #[async_trait]
@@ -49,7 +61,7 @@ impl Actor for Swapper {
                 return;
             }
         };
-        tracing::debug!("solana vault: {}", sol_vault);
+        tracing::info!("solana vault: {}", sol_vault);
 
         let maybe_vault_sol_account = get_token_account(&self.client, &sol_vault).await;
         if maybe_vault_sol_account.is_err() {
@@ -95,45 +107,47 @@ impl Swapper {
             &AMM_V4,
         )
         .0;
+        let (pool_info, _market_info) =
+            get_pool_and_market_info(&client, &amm_id, &market_id).await?;
 
-        Swapper::from_pool_params(client, config, amm_id, market_id, trade_amount).await
+        Swapper::from_pool_params(
+            client,
+            config,
+            PoolInitTxInfos {
+                amm_id,
+                market_id,
+                base_mint: pool_info.base_mint,
+                quote_mint: pool_info.quote_mint,
+            },
+            trade_amount,
+        )
+        .await
     }
 
     pub async fn from_pool_params(
         client: Arc<RpcClient>,
         config: ProgramConfig,
-        amm_id: Pubkey,
-        market_id: Pubkey,
+        pool_init_tx_infos: PoolInitTxInfos,
         trade_amount: f64,
     ) -> Result<Self> {
         let user_keypair = Keypair::from_base58_string(&config.buyer_private_key);
 
-        let (pool_info, market_info) =
-            get_pool_and_market_info(&client, &amm_id, &market_id).await?;
+        let (pool_info, market_info, user_token_accounts) =
+            get_accounts_for_swap(&client, &user_keypair, pool_init_tx_infos).await?;
 
         let associated_authority =
             get_associated_authority(pool_info.market_program_id, pool_info.market_id).unwrap();
-
-        let (user_base_token_account, user_quote_token_account, account_to_create) =
-            get_user_token_accounts(
-                &client,
-                &user_keypair,
-                pool_info.base_mint,
-                pool_info.quote_mint,
-            )
-            .await
-            .unwrap();
 
         Ok(Self {
             client,
             user_keypair,
             pool_info,
-            amm_id,
-            user_base_token_account,
-            user_quote_token_account,
+            amm_id: pool_init_tx_infos.amm_id,
+            user_base_token_account: user_token_accounts.user_base_token_account,
+            user_quote_token_account: user_token_accounts.user_quote_token_account,
             market_info,
             associated_authority,
-            account_to_create,
+            account_to_create: user_token_accounts.account_to_create,
             trade_amount,
         })
     }
@@ -162,53 +176,11 @@ impl Swapper {
             instructions.push(associated_token_account_create_instruction);
         }
 
-        let base_vault_balance_info = self
-            .client
-            .get_token_account_balance_with_commitment(
-                &self.pool_info.base_vault,
-                CommitmentConfig::confirmed(),
-            )
-            .await
-            .unwrap()
-            .value;
-
-        let quote_vault_balance_info = self
-            .client
-            .get_token_account_balance_with_commitment(
-                &self.pool_info.quote_vault,
-                CommitmentConfig::confirmed(),
-            )
-            .await
-            .unwrap()
-            .value;
-
-        let in_token_balance = self
-            .client
-            .get_token_account_balance(&user_in_token_account)
-            .await
-            .unwrap()
-            .amount
-            .parse::<f64>()
-            .unwrap();
-
         let amount_in = if self.pool_info.base_mint == *in_token {
-            Swapper::get_swap_amounts(
-                amount_in,
-                base_vault_balance_info.decimals,
-                in_token_balance,
-            )
+            amount_in * 10_f64.powi(self.pool_info.base_decimal.try_into().unwrap())
         } else {
-            Swapper::get_swap_amounts(
-                amount_in,
-                quote_vault_balance_info.decimals,
-                in_token_balance,
-            )
+            amount_in * 10_f64.powi(self.pool_info.quote_decimal.try_into().unwrap())
         };
-        tracing::debug!(
-            "user_in_token_account {} user_out_token_account {}",
-            user_in_token_account,
-            user_out_token_account
-        );
         tracing::debug!("swap base in: {} for minimum 0 out", amount_in);
         let instruction = self.build_swap_base_in_instruction(
             amount_in,
@@ -253,15 +225,6 @@ impl Swapper {
         .unwrap()
     }
 
-    fn get_swap_amounts(mut amount_in: f64, in_decimals: u8, in_token_balance: f64) -> f64 {
-        if amount_in == 0. {
-            amount_in = in_token_balance;
-        } else {
-            amount_in *= 10_f64.powi(in_decimals.into());
-        }
-        amount_in
-    }
-
     async fn sign_and_send_instructions(&self, instructions: Vec<Instruction>) {
         let recent_blockhash = self
             .client
@@ -283,9 +246,10 @@ impl Swapper {
             .client
             .send_and_confirm_transaction_with_spinner_and_config(
                 &transaction,
-                CommitmentConfig::finalized(),
+                CommitmentConfig::confirmed(),
                 RpcSendTransactionConfig {
-                    skip_preflight: true,
+                    skip_preflight: false,
+                    preflight_commitment: Some(CommitmentLevel::Processed),
                     ..RpcSendTransactionConfig::default()
                 },
             )

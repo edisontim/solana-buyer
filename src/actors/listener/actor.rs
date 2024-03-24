@@ -10,10 +10,9 @@ use solana_client::{
     rpc_config::{RpcTransactionLogsConfig, RpcTransactionLogsFilter},
 };
 use solana_sdk::commitment_config::CommitmentConfig;
-use solana_sdk::pubkey::Pubkey;
 
-use crate::actors::listener::utils::get_market_id_and_amm_id;
-use crate::actors::swapper::actor::Swapper;
+use crate::actors::listener::utils::get_pool_init_accounts;
+use crate::actors::swapper::actor::{PoolInitTxInfos, Swapper};
 use crate::message;
 use crate::{
     constants::CREATE_POOL_FEE_ACCOUNT_ADDRESS,
@@ -29,7 +28,7 @@ pub struct Listener {
 }
 
 #[derive(Debug, Clone)]
-struct SpawnSwapper(Pubkey, Pubkey);
+struct SpawnSwapper(PoolInitTxInfos);
 message!(SpawnSwapper, Result<(), eyre::Error>);
 
 #[async_trait]
@@ -42,29 +41,31 @@ impl Handler<SpawnSwapper> for Listener {
     ) -> Result<(), eyre::Error> {
         let amount_swappers = ctx.supervised_count();
         if amount_swappers >= self.max_swappers as usize {
-            tracing::debug!("max swappers reached");
+            tracing::info!("max swappers reached");
             return Ok(());
         }
 
+        let init_pool_tx_infos = message.0;
         let swapper = Swapper::from_pool_params(
             Arc::clone(&self.client),
             self.config.clone(),
-            message.0,
-            message.1,
+            init_pool_tx_infos,
             self.trade_amount,
         )
         .await?;
 
         let id = format!(
             "swapper-{}{}",
-            &message.0.to_string()[..6],
-            &message.1.to_string()[..6]
+            &init_pool_tx_infos.market_id.to_string()[..6],
+            &init_pool_tx_infos.amm_id.to_string()[..6],
         );
         tracing::info!(
-            "spawned swapper with id {}, market id {:?} and amm id {:?}",
+            "spawned swapper with id {}, market id {:?}, amm id {:?}, base_mint {:?}, quote_mint {:?}",
             id,
-            message.0,
-            message.1
+            init_pool_tx_infos.market_id,
+            init_pool_tx_infos.amm_id,
+            init_pool_tx_infos.base_mint,
+            init_pool_tx_infos.quote_mint,
         );
 
         ctx.spawn_deferred(id.into_actor_id(), swapper)?;
@@ -139,10 +140,11 @@ async fn listen_routine(
             commitment: Some(CommitmentConfig::confirmed()),
         },
     )
+    .await
     .expect("failed to create a ws subscription");
 
     loop {
-        let maybe_log = ws.read::<LogsSubscribeResponse>();
+        let maybe_log = ws.read::<LogsSubscribeResponse>().await;
 
         if maybe_log.is_err() {
             tracing::debug!("failed to read: {:?}", maybe_log.err());
@@ -150,16 +152,18 @@ async fn listen_routine(
         }
 
         let log = maybe_log.unwrap();
-        let maybe_market_and_amm_id = get_market_id_and_amm_id(Arc::clone(&client), log).await;
-        if maybe_market_and_amm_id.is_err() {
-            tracing::debug!("error with log: {:?}", maybe_market_and_amm_id.unwrap_err());
+        let maybe_pool_init_tx_infos = get_pool_init_accounts(Arc::clone(&client), log).await;
+        if maybe_pool_init_tx_infos.is_err() {
+            tracing::debug!(
+                "error with log: {:?}",
+                maybe_pool_init_tx_infos.unwrap_err()
+            );
             continue;
         }
 
-        let (market_id, amm_id) = maybe_market_and_amm_id.unwrap();
-
+        let pool_init_tx_infos = maybe_pool_init_tx_infos.unwrap();
         let _ = listener_reference
-            .notify(SpawnSwapper(amm_id, market_id))
+            .notify(SpawnSwapper(pool_init_tx_infos))
             .inspect_err(|err| tracing::error!("failed to spawn swapper: {:?}", err));
     }
 }

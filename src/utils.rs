@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use borsh::BorshDeserialize;
 use eyre::Result;
 use eyre::{eyre, OptionExt};
@@ -9,6 +7,7 @@ use solana_client::{
     rpc_config::{RpcAccountInfoConfig, RpcProgramAccountsConfig, RpcTransactionConfig},
     rpc_filter::{Memcmp, MemcmpEncodedBytes, RpcFilterType},
 };
+use solana_sdk::account::ReadableAccount;
 use solana_sdk::{
     commitment_config::CommitmentConfig,
     compute_budget::ComputeBudgetInstruction,
@@ -21,7 +20,8 @@ use solana_transaction_status::EncodedConfirmedTransactionWithStatusMeta;
 use spl_associated_token_account::get_associated_token_address;
 use tracing_subscriber::{filter, FmtSubscriber};
 
-use crate::types::TokenAccount;
+use crate::actors::swapper::actor::PoolInitTxInfos;
+use crate::types::{TokenAccount, UserTokenAccounts};
 use crate::{
     constants::OPENBOOK,
     types::{MarketInfo, PoolInfo},
@@ -61,6 +61,78 @@ pub fn get_associated_authority(program_id: Pubkey, market_id: Pubkey) -> Option
         }
     }
     None
+}
+
+pub async fn get_accounts_for_swap(
+    client: &RpcClient,
+    user_keypair: &Keypair,
+    pool_init_tx_infos: PoolInitTxInfos,
+) -> Result<(PoolInfo, MarketInfo, UserTokenAccounts)> {
+    let mut account_to_create: Option<Pubkey> = None;
+
+    let user_base_token_account =
+        get_associated_token_address(&user_keypair.pubkey(), &pool_init_tx_infos.base_mint);
+    let user_quote_token_account =
+        get_associated_token_address(&user_keypair.pubkey(), &pool_init_tx_infos.quote_mint);
+
+    let rpc_response = client
+        .get_multiple_accounts_with_config(
+            &[
+                pool_init_tx_infos.amm_id,
+                pool_init_tx_infos.market_id,
+                user_base_token_account,
+                user_quote_token_account,
+            ],
+            RpcAccountInfoConfig {
+                encoding: Some(UiAccountEncoding::Base64),
+                data_slice: None,
+                commitment: Some(CommitmentConfig::processed()),
+                ..RpcAccountInfoConfig::default()
+            },
+        )
+        .await?;
+
+    let pool_info_account = rpc_response
+        .value
+        .get(0)
+        .cloned()
+        .flatten()
+        .ok_or_eyre("pool account not found")?;
+    let pool_info = PoolInfo::deserialize(&mut pool_info_account.data())?;
+
+    let market_account = rpc_response
+        .value
+        .get(1)
+        .cloned()
+        .flatten()
+        .ok_or_eyre("market account not found")?;
+    let market_info = MarketInfo::deserialize(&mut market_account.data())?;
+
+    match rpc_response.value.get(2).unwrap() {
+        Some(_) => tracing::info!("User's ATA for base token exists. Skipping creation.."),
+        None => {
+            tracing::info!("User's ATA for base token does not exist. Need to create..");
+            account_to_create = Some(pool_init_tx_infos.base_mint);
+        }
+    };
+
+    match rpc_response.value.get(3).unwrap() {
+        Some(_) => tracing::info!("User's ATA for quote tokens exists. Skipping creation.."),
+        None => {
+            tracing::info!("User's ATA for quote token does not exist. Need to create..");
+            account_to_create = Some(pool_init_tx_infos.quote_mint);
+        }
+    }
+
+    Ok((
+        pool_info,
+        market_info,
+        UserTokenAccounts {
+            user_base_token_account,
+            user_quote_token_account,
+            account_to_create,
+        },
+    ))
 }
 
 pub async fn get_pool_and_market_info(
@@ -105,64 +177,17 @@ pub async fn get_token_account(
             RpcAccountInfoConfig {
                 encoding: Some(UiAccountEncoding::Base64),
                 data_slice: None,
-                commitment: Some(CommitmentConfig::processed()),
+                commitment: Some(CommitmentConfig::confirmed()),
                 ..RpcAccountInfoConfig::default()
             },
         )
         .await
         .unwrap()
         .value
-        .ok_or_else(|| eyre!("Token account not found"))?;
+        .ok_or_eyre("Token account not found")?;
 
     let account = TokenAccount::deserialize(&mut &account.data[..])?;
     Ok(account)
-}
-
-pub async fn get_user_token_accounts(
-    client: &Arc<RpcClient>,
-    user_keypair: &Keypair,
-    base_token: Pubkey,
-    quote_token: Pubkey,
-) -> Result<(Pubkey, Pubkey, Option<Pubkey>), eyre::Error> {
-    let mut account_to_create: Option<Pubkey> = None;
-
-    let user_base_token_account = get_associated_token_address(&user_keypair.pubkey(), &base_token);
-    let user_quote_token_account =
-        get_associated_token_address(&user_keypair.pubkey(), &quote_token);
-
-    let mut user_token_accounts = client
-        .get_multiple_accounts_with_config(
-            &[user_base_token_account, user_quote_token_account],
-            RpcAccountInfoConfig {
-                commitment: Some(CommitmentConfig::processed()),
-                ..RpcAccountInfoConfig::default()
-            },
-        )
-        .await?
-        .value;
-
-    match user_token_accounts.swap_remove(0) {
-        Some(_) => tracing::debug!("User's ATA for base token exists. Skipping creation.."),
-        None => {
-            tracing::debug!("User's ATA for base token does not exist. Creating..");
-            account_to_create = Some(base_token);
-        }
-    };
-
-    match user_token_accounts.swap_remove(0) {
-        Some(_) => tracing::debug!("User's ATA for quote tokens exists. Skipping creation.."),
-        None => {
-            tracing::debug!("User's ATA for quote token does not exist. Creating..");
-            account_to_create = Some(quote_token);
-        }
-    }
-
-    tracing::debug!("account to create: {:?}", account_to_create);
-    Ok((
-        user_base_token_account,
-        user_quote_token_account,
-        account_to_create,
-    ))
 }
 
 /// Fetches the serum marketID of the pool

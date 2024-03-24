@@ -124,3 +124,10 @@ impl ProgramConfig {
         }
     }
 }
+
+#[derive(Debug, Clone)]
+pub struct UserTokenAccounts {
+    pub user_base_token_account: Pubkey,
+    pub user_quote_token_account: Pubkey,
+    pub account_to_create: Option<Pubkey>,
+}

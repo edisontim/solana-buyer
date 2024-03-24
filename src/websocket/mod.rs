@@ -1,6 +1,7 @@
-use std::{borrow::BorrowMut, net::TcpStream};
+use std::borrow::BorrowMut;
 
-use eyre::eyre;
+use eyre::{eyre, OptionExt};
+use futures_util::{SinkExt, StreamExt};
 use serde::de::DeserializeOwned;
 use serde_json::json;
 use solana_client::{
@@ -8,7 +9,9 @@ use solana_client::{
     rpc_response::{Response, RpcLogsResponse},
 };
 use std::marker::PhantomData;
-use tungstenite::{connect, Message};
+use tokio_tungstenite::{
+    connect_async, tungstenite::protocol::Message, MaybeTlsStream, WebSocketStream,
+};
 use url::Url;
 
 #[allow(dead_code)]
@@ -19,7 +22,7 @@ pub struct Initialized;
 pub struct Initializing;
 
 pub struct WebSocket<Status = Uninitialized> {
-    socket: Option<tungstenite::WebSocket<tungstenite::stream::MaybeTlsStream<TcpStream>>>,
+    socket: Option<WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>>,
     config: WebSocketConfig,
     subscription_string: Option<String>,
     status: PhantomData<Status>,
@@ -31,21 +34,27 @@ pub struct WebSocketConfig {
 }
 
 impl WebSocket<Initialized> {
-    pub fn read<T: DeserializeOwned + std::fmt::Debug>(&mut self) -> Result<T, eyre::Error> {
+    pub async fn read<T: DeserializeOwned + std::fmt::Debug>(&mut self) -> Result<T, eyre::Error> {
         if self.socket.is_none() {
             return Err(eyre!("Use subscription function before read"));
         }
         loop {
-            let read_result = self.socket.as_mut().unwrap().read();
+            let read_result = self
+                .socket
+                .as_mut()
+                .unwrap()
+                .next()
+                .await
+                .ok_or_eyre("Failed to read from ws");
             if read_result.is_err() {
                 tracing::warn!("connection lost: {}", read_result.err().unwrap());
                 let _ = self.socket.as_mut().unwrap().close(None);
                 let _ = self.socket.as_mut().unwrap().flush();
-                self.reconnect()?;
+                self.reconnect().await?;
                 self.config.num_retries -= 1;
                 continue;
             }
-            let msg = read_result.unwrap().to_string();
+            let msg = read_result??.to_string();
             let deserialize_result = serde_json::from_str::<T>(&msg);
             if deserialize_result.is_err() {
                 tracing::warn!(
@@ -60,20 +69,21 @@ impl WebSocket<Initialized> {
         }
     }
 
-    pub fn reconnect(&mut self) -> Result<(), eyre::Error> {
-        let mut socket = attempt_connection(&self.config.url, self.config.num_retries)?;
+    pub async fn reconnect(&mut self) -> Result<(), eyre::Error> {
+        let mut socket = attempt_connection(&self.config.url, self.config.num_retries).await?;
         attempt_subscription(
             &self.subscription_string.clone().unwrap(),
             &mut socket,
             self.config.num_retries,
-        )?;
+        )
+        .await?;
         self.socket.replace(socket);
         Ok(())
     }
 }
 
 impl WebSocket<Uninitialized> {
-    pub fn create_new_logs_subscription(
+    pub async fn create_new_logs_subscription(
         config: WebSocketConfig,
         subscription_logs_filter: RpcTransactionLogsFilter,
         subscription_logs_config: RpcTransactionLogsConfig,
@@ -93,17 +103,18 @@ impl WebSocket<Uninitialized> {
             status: PhantomData,
         };
 
-        ws.connect_and_subscribe()?;
+        ws.connect_and_subscribe().await?;
         Ok(WebSocket::from_uninitialized(ws))
     }
 
-    fn connect_and_subscribe(&mut self) -> Result<(), eyre::Error> {
-        let mut socket = attempt_connection(&self.config.url, self.config.num_retries)?;
+    async fn connect_and_subscribe(&mut self) -> Result<(), eyre::Error> {
+        let mut socket = attempt_connection(&self.config.url, self.config.num_retries).await?;
         attempt_subscription(
             &self.subscription_string.clone().unwrap(),
             &mut socket,
             self.config.num_retries,
-        )?;
+        )
+        .await?;
         self.socket.replace(socket);
         Ok(())
     }
@@ -120,35 +131,38 @@ impl WebSocket<Initializing> {
     }
 }
 
-fn attempt_connection(
+async fn attempt_connection(
     url: &str,
     mut num_retries: u8,
-) -> Result<tungstenite::WebSocket<tungstenite::stream::MaybeTlsStream<TcpStream>>, eyre::Error> {
+) -> Result<WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>, eyre::Error> {
     loop {
         if num_retries == 0 {
             return Err(eyre!("failed to connect after 5 tries"));
         }
-        let connection_result = connect(Url::parse(url).unwrap());
-        if connection_result.is_err() {
-            tracing::warn!("Failed to connect websocket");
+        let maybe_ws_stream = connect_async(Url::parse(url).unwrap()).await;
+        if maybe_ws_stream.is_err() {
+            tracing::warn!(
+                "Failed to connect to websocket {:?}",
+                maybe_ws_stream.unwrap_err()
+            );
             num_retries -= 1;
             continue;
         }
-        let (new_socket, _) = connection_result.unwrap();
-        break Ok(new_socket);
+        let (ws_stream, _) = maybe_ws_stream.unwrap();
+        break Ok(ws_stream);
     }
 }
 
-fn attempt_subscription(
+async fn attempt_subscription(
     subscription_string: &str,
-    socket: &mut tungstenite::WebSocket<tungstenite::stream::MaybeTlsStream<TcpStream>>,
+    socket: &mut WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>,
     mut num_retries: u8,
 ) -> Result<(), eyre::Error> {
     loop {
         if num_retries == 0 {
             return Err(eyre!("Failed to subscribe to websocket"));
         }
-        let subscription_result = subscribe(socket.borrow_mut(), subscription_string);
+        let subscription_result = subscribe(socket.borrow_mut(), subscription_string).await;
         match subscription_result {
             Ok(()) => {
                 tracing::debug!("Successfully subscribed to ws");
@@ -163,14 +177,21 @@ fn attempt_subscription(
     }
 }
 
-fn subscribe(
-    socket: &mut tungstenite::WebSocket<tungstenite::stream::MaybeTlsStream<TcpStream>>,
+async fn subscribe(
+    socket: &mut WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>,
     subscription_string: &str,
 ) -> Result<(), eyre::Error> {
-    socket
-        .send(Message::Text(subscription_string.to_string()))
-        .unwrap();
-    let _ = serde_json::from_str::<SubscriptionResponse>(&socket.read()?.to_string());
+    let (mut write, mut read) = socket.split();
+    let _ = write
+        .send(Message::from(subscription_string.to_string()))
+        .await;
+    let _ = serde_json::from_str::<SubscriptionResponse>(
+        &read
+            .next()
+            .await
+            .ok_or_eyre("Failed to read subscription response")??
+            .to_string(),
+    );
     Ok(())
 }
 
@@ -193,6 +214,6 @@ pub struct SubscribeResponseParams {
 #[derive(Debug, serde::Deserialize)]
 struct SubscriptionResponse {
     jsonrpc: String,
-    result: u8,
-    id: u8,
+    result: u64,
+    id: u64,
 }

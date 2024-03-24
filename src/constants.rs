@@ -24,3 +24,8 @@ lazy_static! {
     pub static ref MIN_LIQUIDITY: u64 = 25_000_000_000; // 25 billion lamports ~ 4200$
     pub static ref MAX_LIQUIDITY: u64 = 150_000_000_000; // 150 billion lamports ~ 25000$
 }
+
+pub const AMM_ID_INDEX_IN_INIT_INSTRUCTION: usize = 4;
+pub const MARKET_ID_INDEX_IN_INIT_INSTRUCTION: usize = 16;
+pub const BASE_MINT_INDEX_IN_INIT_INSTRUCTION: usize = 8;
+pub const QUOTE_MINT_INDEX_IN_INIT_INSTRUCTION: usize = 9;
