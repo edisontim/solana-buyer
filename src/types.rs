@@ -2,6 +2,27 @@ use borsh::BorshDeserialize;
 use serde::Deserialize;
 use solana_sdk::pubkey::Pubkey;
 
+#[derive(Debug, PartialEq, BorshDeserialize)]
+pub struct TokenAccount {
+    pub mint: Pubkey,
+    pub owner: Pubkey,
+    pub amount: u64,
+    pub delegate: Option<Pubkey>,
+    pub state: AccountState,
+    pub is_native: Option<u64>,
+    pub delegated_amount: u64,
+    pub close_authority: Option<Pubkey>,
+}
+
+#[repr(u8)]
+#[derive(Debug, PartialEq, BorshDeserialize)]
+#[borsh(use_discriminant = false)]
+pub enum AccountState {
+    Uninitialized = 0,
+    Initialized = 1,
+    Frozen = 2,
+}
+
 #[derive(Debug, Default, PartialEq, BorshDeserialize)]
 pub struct PoolInfo {
     pub status: u64,

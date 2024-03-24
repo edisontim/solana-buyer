@@ -16,7 +16,7 @@ pub struct InstantSwapSubcommand {
     #[arg(short, long)]
     pub output_token_address: String,
 
-    /// Amount in decimals in (-1 for max)
+    /// Amount in decimals in
     #[arg(short, long)]
     pub amount_in: f64,
 }
@@ -30,7 +30,7 @@ impl InstantSwapSubcommand {
         )
         .await;
 
-        let swapper = Swapper::new(client, market_id, config)
+        let swapper = Swapper::new(client, config, market_id, self.amount_in)
             .await
             .expect("failed to swap");
         swapper

@@ -21,6 +21,7 @@ use solana_transaction_status::EncodedConfirmedTransactionWithStatusMeta;
 use spl_associated_token_account::get_associated_token_address;
 use tracing_subscriber::{filter, FmtSubscriber};
 
+use crate::types::TokenAccount;
 use crate::{
     constants::OPENBOOK,
     types::{MarketInfo, PoolInfo},
@@ -92,6 +93,29 @@ pub async fn get_pool_and_market_info(
         .ok_or_eyre("market account not found")?;
     let market_info = MarketInfo::deserialize(&mut &market_account.data[..])?;
     Ok((pool_info, market_info))
+}
+
+pub async fn get_token_account(
+    client: &RpcClient,
+    token_account: &Pubkey,
+) -> Result<TokenAccount, eyre::Error> {
+    let account = client
+        .get_account_with_config(
+            token_account,
+            RpcAccountInfoConfig {
+                encoding: Some(UiAccountEncoding::Base64),
+                data_slice: None,
+                commitment: Some(CommitmentConfig::processed()),
+                ..RpcAccountInfoConfig::default()
+            },
+        )
+        .await
+        .unwrap()
+        .value
+        .ok_or_else(|| eyre!("Token account not found"))?;
+
+    let account = TokenAccount::deserialize(&mut &account.data[..])?;
+    Ok(account)
 }
 
 pub async fn get_user_token_accounts(
@@ -204,7 +228,7 @@ pub async fn get_transaction_from_signature(
 
     if get_transaction_result.is_err() {
         return Err(eyre!(
-            "Failed to get transaction: {:?}",
+            "failed to get transaction: {:?}",
             get_transaction_result.err()
         ));
     }

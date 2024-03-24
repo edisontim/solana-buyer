@@ -13,11 +13,11 @@ use solana_sdk::{
 use spl_associated_token_account::instruction::create_associated_token_account;
 
 use crate::{
-    constants::{AMM_V4, RAYDIUM_AUTHORITY_V4, TOKEN_PROGRAM},
+    constants::{AMM_V4, MAX_LIQUIDITY, MIN_LIQUIDITY, RAYDIUM_AUTHORITY_V4, SOL, TOKEN_PROGRAM},
     types::{MarketInfo, PoolInfo, ProgramConfig},
     utils::{
         get_associated_authority, get_pool_and_market_info, get_prio_fee_instructions,
-        get_user_token_accounts,
+        get_token_account, get_user_token_accounts,
     },
 };
 
@@ -31,21 +31,64 @@ pub struct Swapper {
     user_quote_token_account: Pubkey,
     associated_authority: Pubkey,
     account_to_create: Option<Pubkey>,
+    trade_amount: f64,
 }
 
 #[async_trait]
 impl Actor for Swapper {
     #[tracing::instrument(skip_all)]
-    async fn started(&mut self, _ctx: &mut ActorContext) {
-        tracing::info!("Swapper now running!");
+    async fn started(&mut self, ctx: &mut ActorContext) {
+        tracing::info!("swapper now running");
+
+        let sol_vault = match (self.pool_info.base_mint, self.pool_info.quote_mint) {
+            (base, _) if *SOL == base => self.pool_info.base_vault,
+            (_, quote) if *SOL == quote => self.pool_info.quote_vault,
+            _ => {
+                tracing::error!("stopping swapper: can only trade SOL");
+                ctx.stop(None);
+                return;
+            }
+        };
+        tracing::debug!("solana vault: {}", sol_vault);
+
+        let maybe_vault_sol_account = get_token_account(&self.client, &sol_vault).await;
+        if maybe_vault_sol_account.is_err() {
+            tracing::error!(
+                "stopping swapper: failed to get token account: {:?}",
+                maybe_vault_sol_account.err()
+            );
+            ctx.stop(None);
+            return;
+        }
+
+        let vault_sol_token_account = maybe_vault_sol_account.unwrap();
+        if vault_sol_token_account.amount < *MIN_LIQUIDITY
+            || vault_sol_token_account.amount > *MAX_LIQUIDITY
+        {
+            tracing::warn!(
+                "stopping swapper: liquidity not in bound to swap: {}",
+                vault_sol_token_account.amount
+            );
+            ctx.stop(None);
+            return;
+        }
+
+        // We await here because we don't want the actor to do
+        // anything else until the swap is complete.
+        self.swap(&SOL, self.trade_amount).await;
+
+        // Then we can kill the swapper
+        tracing::info!("stopping swapper after swap");
+        ctx.stop(None);
     }
 }
 
 impl Swapper {
     pub async fn new(
         client: Arc<RpcClient>,
-        market_id: Pubkey,
         config: ProgramConfig,
+        market_id: Pubkey,
+        trade_amount: f64,
     ) -> Result<Self> {
         let amm_id = Pubkey::find_program_address(
             &[AMM_V4.as_ref(), market_id.as_ref(), b"amm_associated_seed"],
@@ -53,7 +96,7 @@ impl Swapper {
         )
         .0;
 
-        Swapper::from_pool_params(client, config, amm_id, market_id).await
+        Swapper::from_pool_params(client, config, amm_id, market_id, trade_amount).await
     }
 
     pub async fn from_pool_params(
@@ -61,6 +104,7 @@ impl Swapper {
         config: ProgramConfig,
         amm_id: Pubkey,
         market_id: Pubkey,
+        trade_amount: f64,
     ) -> Result<Self> {
         let user_keypair = Keypair::from_base58_string(&config.buyer_private_key);
 
@@ -90,6 +134,7 @@ impl Swapper {
             market_info,
             associated_authority,
             account_to_create,
+            trade_amount,
         })
     }
 
@@ -246,7 +291,7 @@ impl Swapper {
             )
             .await
         {
-            tracing::error!("Failed to send transaction: {:?}", e);
+            tracing::error!("failed to send transaction: {:?}", e);
         };
     }
 }

@@ -38,7 +38,7 @@ impl WebSocket<Initialized> {
         loop {
             let read_result = self.socket.as_mut().unwrap().read();
             if read_result.is_err() {
-                tracing::warn!("Connection lost: {}", read_result.err().unwrap());
+                tracing::warn!("connection lost: {}", read_result.err().unwrap());
                 let _ = self.socket.as_mut().unwrap().close(None);
                 let _ = self.socket.as_mut().unwrap().flush();
                 self.reconnect()?;
