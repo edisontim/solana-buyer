@@ -107,8 +107,7 @@ impl Swapper {
             &AMM_V4,
         )
         .0;
-        let (pool_info, _market_info) =
-            get_pool_and_market_info(&client, &amm_id, &market_id).await?;
+        let (pool_info, _) = get_pool_and_market_info(&client, &amm_id, &market_id).await?;
 
         Swapper::from_pool_params(
             client,
@@ -248,7 +247,7 @@ impl Swapper {
                 &transaction,
                 CommitmentConfig::confirmed(),
                 RpcSendTransactionConfig {
-                    skip_preflight: false,
+                    skip_preflight: true,
                     preflight_commitment: Some(CommitmentLevel::Processed),
                     ..RpcSendTransactionConfig::default()
                 },

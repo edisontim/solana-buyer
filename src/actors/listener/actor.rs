@@ -11,7 +11,7 @@ use solana_client::{
 };
 use solana_sdk::commitment_config::CommitmentConfig;
 
-use crate::actors::listener::utils::get_pool_init_accounts;
+use crate::actors::listener::utils::get_pool_init_infos;
 use crate::actors::swapper::actor::{PoolInitTxInfos, Swapper};
 use crate::message;
 use crate::{
@@ -152,7 +152,7 @@ async fn listen_routine(
         }
 
         let log = maybe_log.unwrap();
-        let maybe_pool_init_tx_infos = get_pool_init_accounts(Arc::clone(&client), log).await;
+        let maybe_pool_init_tx_infos = get_pool_init_infos(Arc::clone(&client), log).await;
         if maybe_pool_init_tx_infos.is_err() {
             tracing::debug!(
                 "error with log: {:?}",

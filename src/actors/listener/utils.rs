@@ -1,4 +1,3 @@
-use std::borrow::Borrow;
 use std::str::FromStr;
 use std::sync::Arc;
 
@@ -20,7 +19,7 @@ use crate::utils::get_transaction_from_signature;
 use crate::websocket::LogsSubscribeResponse;
 
 /// Get the market_id and amm_id from the log response
-pub(super) async fn get_pool_init_accounts(
+pub(super) async fn get_pool_init_infos(
     client: Arc<RpcClient>,
     log: LogsSubscribeResponse,
 ) -> Result<PoolInitTxInfos, eyre::Error> {
@@ -44,7 +43,7 @@ pub(super) async fn get_pool_init_accounts(
     .await?;
 
     let pool_init_tx_infos_indexes =
-        get_useful_account_indexes_from_transaction(pool_creation_tx.borrow())?;
+        get_useful_account_indexes_from_transaction(&pool_creation_tx)?;
 
     let account_keys = get_account_keys(pool_creation_tx)?;
 
@@ -167,5 +166,5 @@ fn get_useful_account_indexes_from_transaction(
         _ => return Err(eyre!("Wrong format of transaction")),
     };
 
-    Ok((0, 0, 0, 0))
+    Err(eyre!("Failed to get a parsable transaction"))
 }
