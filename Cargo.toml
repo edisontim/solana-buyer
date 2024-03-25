@@ -39,5 +39,6 @@ tracing = { version = "0.1", default-features = false, features = [
   "attributes",
 ] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-tungstenite = { version = "0.21.0", features = ["native-tls"] }
 url = { version = "2.5.0", default-features = false }
+tokio-tungstenite = { version = "0.21.0", default-features = false, features = ["connect", "native-tls"] }
+futures-util = { version = "0.3.30", default-features = false }
