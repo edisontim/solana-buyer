@@ -48,8 +48,8 @@ impl WebSocket<Initialized> {
                 .ok_or_eyre("Failed to read from ws");
             if read_result.is_err() {
                 tracing::warn!("connection lost: {}", read_result.err().unwrap());
-                let _ = self.socket.as_mut().unwrap().close(None);
-                let _ = self.socket.as_mut().unwrap().flush();
+                let _ = self.socket.as_mut().unwrap().close(None).await;
+                let _ = self.socket.as_mut().unwrap().flush().await;
                 self.reconnect().await?;
                 self.config.num_retries -= 1;
                 continue;

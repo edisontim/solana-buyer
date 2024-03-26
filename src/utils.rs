@@ -7,7 +7,7 @@ use solana_client::{
     rpc_config::{RpcAccountInfoConfig, RpcProgramAccountsConfig, RpcTransactionConfig},
     rpc_filter::{Memcmp, MemcmpEncodedBytes, RpcFilterType},
 };
-use solana_sdk::account::ReadableAccount;
+use solana_sdk::account::{Account, ReadableAccount};
 use solana_sdk::{
     commitment_config::CommitmentConfig,
     compute_budget::ComputeBudgetInstruction,
@@ -94,7 +94,7 @@ pub async fn get_accounts_for_swap(
 
     let pool_info_account = rpc_response
         .value
-        .get(0)
+        .first()
         .cloned()
         .flatten()
         .ok_or_eyre("pool account not found")?;
@@ -167,13 +167,13 @@ pub async fn get_pool_and_market_info(
     Ok((pool_info, market_info))
 }
 
-pub async fn get_token_account(
+pub async fn get_token_accounts(
     client: &RpcClient,
-    token_account: &Pubkey,
-) -> Result<TokenAccount, eyre::Error> {
-    let account = client
-        .get_account_with_config(
-            token_account,
+    accounts_pub_keys: &[Pubkey],
+) -> Result<Vec<TokenAccount>, eyre::Error> {
+    let accounts: Vec<Account> = client
+        .get_multiple_accounts_with_config(
+            accounts_pub_keys,
             RpcAccountInfoConfig {
                 encoding: Some(UiAccountEncoding::Base64),
                 data_slice: None,
@@ -184,9 +184,19 @@ pub async fn get_token_account(
         .await
         .unwrap()
         .value
-        .ok_or_eyre("Token account not found")?;
+        .into_iter()
+        .collect::<Option<Vec<_>>>()
+        .ok_or_else(|| eyre!("Token accounts not found"))?;
 
-    let account = TokenAccount::deserialize(&mut &account.data[..])?;
+    if accounts_pub_keys.len() != accounts.len() {
+        return Err(eyre!("Token accounts not found"));
+    }
+
+    let account = accounts
+        .into_iter()
+        .map(|a| TokenAccount::deserialize(&mut a.data.as_slice()))
+        .collect::<Result<Vec<_>, _>>()?;
+
     Ok(account)
 }
 
