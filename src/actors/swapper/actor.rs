@@ -179,6 +179,7 @@ impl Swapper {
         sol_vault_pub_key: Pubkey,
         target_token_vault_pub_key: Pubkey,
     ) {
+        let mut i = 0;
         loop {
             tokio::time::sleep(time::Duration::from_secs(3)).await;
             let maybe_token_accounts = get_token_accounts(
@@ -216,6 +217,12 @@ impl Swapper {
                 }
                 break;
             }
+
+            if i > 100 {
+                tracing::info!("stopping swapper after 100 iterations");
+                break;
+            }
+            i += 1;
         }
     }
 
