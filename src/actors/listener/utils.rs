@@ -35,7 +35,7 @@ pub(super) async fn get_pool_init_infos(
         &client,
         signature,
         RpcTransactionConfig {
-            encoding: Some(UiTransactionEncoding::Json),
+            encoding: None,
             max_supported_transaction_version: Some(0),
             commitment: Some(CommitmentConfig::confirmed()),
         },

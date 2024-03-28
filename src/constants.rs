@@ -21,8 +21,8 @@ lazy_static! {
     pub static ref TOKEN_PROGRAM: Pubkey =
         Pubkey::from_str("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA").unwrap();
     pub static ref SOL: Pubkey = Pubkey::from_str(WSOL_ADDRESS).unwrap();
-    pub static ref MIN_LIQUIDITY: u64 = 25_000_000_000; // 25 billion lamports ~ 4200$
-    pub static ref MAX_LIQUIDITY: u64 = 150_000_000_000; // 150 billion lamports ~ 25000$
+    pub static ref MIN_LIQUIDITY: u64 = 10_000_000_000; // 10 billion lamports ~ 1850$
+    pub static ref MAX_LIQUIDITY: u64 = 300_000_000_000; // 300 billion lamports ~ 50000$
     pub static ref LAMPORTS_PER_SOL: f64 = 1_000_000_000.;
 }
 

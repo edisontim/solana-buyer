@@ -1,5 +1,3 @@
-use std::borrow::BorrowMut;
-
 use eyre::{eyre, OptionExt};
 use futures_util::{SinkExt, StreamExt};
 use serde::de::DeserializeOwned;
@@ -8,6 +6,7 @@ use solana_client::{
     rpc_config::{RpcTransactionLogsConfig, RpcTransactionLogsFilter},
     rpc_response::{Response, RpcLogsResponse},
 };
+use std::borrow::BorrowMut;
 use std::marker::PhantomData;
 use tokio_tungstenite::{
     connect_async, tungstenite::protocol::Message, MaybeTlsStream, WebSocketStream,
@@ -184,14 +183,12 @@ async fn subscribe(
     let (mut write, mut read) = socket.split();
     let _ = write
         .send(Message::from(subscription_string.to_string()))
-        .await;
-    let _ = serde_json::from_str::<SubscriptionResponse>(
-        &read
-            .next()
-            .await
-            .ok_or_eyre("Failed to read subscription response")??
-            .to_string(),
-    );
+        .await?;
+    let _ = &read
+        .next()
+        .await
+        .ok_or_eyre("Failed to read subscription response")??
+        .to_string();
     Ok(())
 }
 

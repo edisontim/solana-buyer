@@ -4,16 +4,19 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use coerce::actor::context::ActorContext;
 use coerce::actor::Actor;
-use eyre::Result;
+use eyre::{eyre, Result};
 use raydium_contract_instructions::amm_instruction as amm;
-use solana_client::{nonblocking::rpc_client::RpcClient, rpc_config::RpcSendTransactionConfig};
+use solana_client::{
+    client_error::ClientErrorKind, nonblocking::rpc_client::RpcClient,
+    rpc_config::RpcSendTransactionConfig,
+};
 use solana_sdk::{
     commitment_config::{CommitmentConfig, CommitmentLevel},
-    instruction::Instruction,
+    instruction::{Instruction, InstructionError},
     pubkey::Pubkey,
     signature::Keypair,
     signer::Signer,
-    transaction::Transaction,
+    transaction::{Transaction, TransactionError},
 };
 use spl_associated_token_account::instruction::create_associated_token_account;
 
@@ -56,16 +59,18 @@ impl Actor for Swapper {
     async fn started(&mut self, ctx: &mut ActorContext) {
         tracing::info!("swapper now running");
 
-        let (sol_vault, target_token_vault, target_token_pub_key) =
+        let (sol_vault, target_token_vault, target_token_mint, user_target_token_account) =
             match (self.pool_info.base_mint, self.pool_info.quote_mint) {
-                (base, _) if *SOL == base => (
+                (base_mint, quote_mint) if *SOL == base_mint => (
                     self.pool_info.base_vault,
                     self.pool_info.quote_vault,
+                    quote_mint,
                     self.user_quote_token_account,
                 ),
-                (_, quote) if *SOL == quote => (
+                (base_mint, quote_mint) if *SOL == quote_mint => (
                     self.pool_info.quote_vault,
                     self.pool_info.base_vault,
+                    base_mint,
                     self.user_base_token_account,
                 ),
                 _ => {
@@ -107,9 +112,17 @@ impl Actor for Swapper {
             return;
         }
 
+        // Remove the self.account_to_create if it exists
+        self.account_to_create = None;
+
         // SELL
-        self.sell(target_token_pub_key, sol_vault, target_token_vault)
-            .await;
+        self.sell(
+            user_target_token_account,
+            target_token_mint,
+            sol_vault,
+            target_token_vault,
+        )
+        .await;
 
         // Then we can kill the swapper
         tracing::info!("stopping swapper after swap");
@@ -175,7 +188,8 @@ impl Swapper {
 
     pub async fn sell(
         &self,
-        target_token_pub_key: Pubkey,
+        user_target_token_account: Pubkey,
+        target_token_mint: Pubkey,
         sol_vault_pub_key: Pubkey,
         target_token_vault_pub_key: Pubkey,
     ) {
@@ -185,12 +199,18 @@ impl Swapper {
             let maybe_token_accounts = get_token_accounts(
                 &self.client,
                 &[
-                    target_token_pub_key,
+                    user_target_token_account,
                     sol_vault_pub_key,
                     target_token_vault_pub_key,
                 ],
             )
             .await;
+
+            let target_token_decimals = if self.pool_info.base_mint == *SOL {
+                self.pool_info.quote_decimal
+            } else {
+                self.pool_info.base_decimal
+            };
 
             if let Err(e) = maybe_token_accounts {
                 tracing::error!("failed to get token accounts: {:?}", e);
@@ -209,10 +229,14 @@ impl Swapper {
 
             tracing::debug!("buy price: {} current price: {}", buy_price, current_price);
 
+            let target_token_amount =
+                target_token_amount * 10_f64.powi(-(target_token_decimals as i32));
             if current_price > 2. * buy_price {
                 tracing::info!("selling");
-                if let Err(e) = self.swap(&target_token_pub_key, target_token_amount).await {
-                    tracing::error!("failed to swap: {:?}", e);
+                if let Err(e) = self
+                    .swap(&target_token_mint, target_token_amount / 2.)
+                    .await
+                {
                     continue;
                 }
                 break;
@@ -264,7 +288,12 @@ impl Swapper {
         );
 
         instructions.push(instruction);
-        self.sign_and_send_instructions(instructions).await
+        let ret = self.sign_and_send_instructions(instructions).await;
+        if ret.is_err() {
+            self.process_swap_error(ret.err().unwrap())
+        } else {
+            Ok(())
+        }
     }
 
     fn build_swap_base_in_instruction(
@@ -299,7 +328,10 @@ impl Swapper {
         .unwrap()
     }
 
-    async fn sign_and_send_instructions(&self, instructions: Vec<Instruction>) -> Result<()> {
+    async fn sign_and_send_instructions(
+        &self,
+        instructions: Vec<Instruction>,
+    ) -> Result<(), solana_client::client_error::ClientError> {
         let recent_blockhash = self
             .client
             .get_latest_blockhash_with_commitment(solana_sdk::commitment_config::CommitmentConfig {
@@ -316,18 +348,39 @@ impl Swapper {
             recent_blockhash,
         );
 
-        self.client
+        let _ = self
+            .client
             .send_and_confirm_transaction_with_spinner_and_config(
                 &transaction,
                 CommitmentConfig::confirmed(),
                 RpcSendTransactionConfig {
                     skip_preflight: true,
                     preflight_commitment: Some(CommitmentLevel::Processed),
+                    max_retries: Some(0),
                     ..RpcSendTransactionConfig::default()
                 },
             )
-            .await
-            .inspect_err(|e| tracing::error!("failed to send transaction: {:?}", e))?;
+            .await?;
         Ok(())
+    }
+
+    fn process_swap_error(
+        &self,
+        err: solana_client::client_error::ClientError,
+    ) -> Result<(), eyre::Error> {
+        let kind = err.kind();
+        match *kind {
+            ClientErrorKind::TransactionError(TransactionError::InstructionError(
+                _,
+                InstructionError::Custom(custom_error_code),
+            )) => {
+                if custom_error_code == 0x16 {
+                    Err(eyre!("Pool isn't open for trades yet"))
+                } else {
+                    Err(eyre!("{:?}", err))
+                }
+            }
+            _ => Err(eyre!("{:?}", err)),
+        }
     }
 }

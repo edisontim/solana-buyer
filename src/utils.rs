@@ -41,7 +41,7 @@ pub fn init_logging() {
 pub fn get_prio_fee_instructions() -> (Instruction, Instruction) {
     let prio_fee = 130_000;
     tracing::debug!("priority fee {:?}", prio_fee);
-    let compute_unit_limit_instruction = ComputeBudgetInstruction::set_compute_unit_limit(70_000);
+    let compute_unit_limit_instruction = ComputeBudgetInstruction::set_compute_unit_limit(110_000);
     let compute_unit_price_instruction = ComputeBudgetInstruction::set_compute_unit_price(prio_fee);
     (
         compute_unit_limit_instruction,
@@ -86,7 +86,7 @@ pub async fn get_accounts_for_swap(
             RpcAccountInfoConfig {
                 encoding: Some(UiAccountEncoding::Base64),
                 data_slice: None,
-                commitment: Some(CommitmentConfig::processed()),
+                commitment: Some(CommitmentConfig::confirmed()),
                 ..RpcAccountInfoConfig::default()
             },
         )
@@ -97,7 +97,10 @@ pub async fn get_accounts_for_swap(
         .first()
         .cloned()
         .flatten()
-        .ok_or_eyre("pool account not found")?;
+        .ok_or_eyre(format!(
+            "amm_id account ({:?}) not found",
+            pool_init_tx_infos.amm_id
+        ))?;
     let pool_info = PoolInfo::deserialize(&mut pool_info_account.data())?;
 
     let market_account = rpc_response
@@ -105,23 +108,18 @@ pub async fn get_accounts_for_swap(
         .get(1)
         .cloned()
         .flatten()
-        .ok_or_eyre("market account not found")?;
+        .ok_or_eyre(format!(
+            "market account ({:?}) not found",
+            pool_init_tx_infos.market_id,
+        ))?;
     let market_info = MarketInfo::deserialize(&mut market_account.data())?;
 
-    match rpc_response.value.get(2).unwrap() {
-        Some(_) => tracing::info!("User's ATA for base token exists. Skipping creation.."),
-        None => {
-            tracing::info!("User's ATA for base token does not exist. Need to create..");
-            account_to_create = Some(pool_init_tx_infos.base_mint);
-        }
-    };
+    if rpc_response.value.get(2).unwrap().is_none() {
+        account_to_create = Some(pool_init_tx_infos.base_mint);
+    }
 
-    match rpc_response.value.get(3).unwrap() {
-        Some(_) => tracing::info!("User's ATA for quote tokens exists. Skipping creation.."),
-        None => {
-            tracing::info!("User's ATA for quote token does not exist. Need to create..");
-            account_to_create = Some(pool_init_tx_infos.quote_mint);
-        }
+    if rpc_response.value.get(3).unwrap().is_none() {
+        account_to_create = Some(pool_init_tx_infos.quote_mint);
     }
 
     Ok((
@@ -146,7 +144,7 @@ pub async fn get_pool_and_market_info(
             RpcAccountInfoConfig {
                 encoding: Some(UiAccountEncoding::Base64),
                 data_slice: None,
-                commitment: Some(CommitmentConfig::processed()),
+                commitment: Some(CommitmentConfig::confirmed()),
                 ..RpcAccountInfoConfig::default()
             },
         )
@@ -262,10 +260,10 @@ pub async fn get_transaction_from_signature(
         .await;
 
     if get_transaction_result.is_err() {
-        return Err(eyre!(
-            "failed to get transaction: {:?}",
-            get_transaction_result.err()
-        ));
+        tracing::debug!("Retrying to get transaction");
+        return Ok(client
+            .get_transaction_with_config(&signature, rpc_transaction_config)
+            .await?);
     }
 
     let transaction = get_transaction_result.unwrap();
