@@ -21,12 +21,14 @@ lazy_static! {
     pub static ref TOKEN_PROGRAM: Pubkey =
         Pubkey::from_str("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA").unwrap();
     pub static ref SOL: Pubkey = Pubkey::from_str(WSOL_ADDRESS).unwrap();
-    pub static ref MIN_LIQUIDITY: u64 = 10_000_000_000; // 10 billion lamports ~ 1850$
-    pub static ref MAX_LIQUIDITY: u64 = 300_000_000_000; // 300 billion lamports ~ 50000$
+    pub static ref MIN_LIQUIDITY: u64 = 20_000_000_000; // 20 billion lamports ~ 3700$
+    pub static ref MAX_LIQUIDITY: u64 = 150_000_000_000; // 150 billion lamports ~ 25000$
     pub static ref LAMPORTS_PER_SOL: f64 = 1_000_000_000.;
+    pub static ref PUMP_ACCOUNT_INVOLVED_IN_POOL_CREATIONS: Pubkey = Pubkey::from_str("TSLvdd1pWpHVjahSpsvCXUbgwsL3JAcvokwaKt1eokM").unwrap();
 }
 
 pub const AMM_ID_INDEX_IN_INIT_INSTRUCTION: usize = 4;
 pub const MARKET_ID_INDEX_IN_INIT_INSTRUCTION: usize = 16;
 pub const BASE_MINT_INDEX_IN_INIT_INSTRUCTION: usize = 8;
 pub const QUOTE_MINT_INDEX_IN_INIT_INSTRUCTION: usize = 9;
+pub const RUG_AMOUNT: f64 = 55_000_000.; // about 10$

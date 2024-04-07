@@ -1,5 +1,7 @@
 mod actors;
 mod constants;
+mod entities;
+mod migrator;
 mod subcommands;
 mod types;
 mod utils;
@@ -31,5 +33,6 @@ async fn main() {
     match args.command {
         Subcommands::Listen(listen) => listen.run(client, config).await,
         Subcommands::InstantSwap(instant_swap) => instant_swap.run(client, config).await,
+        Subcommands::Index(index) => index.run(client, config).await,
     }
 }

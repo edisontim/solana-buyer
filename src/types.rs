@@ -113,6 +113,7 @@ pub struct ProgramConfig {
     pub ws_rpc_url: String,
     pub http_rpc_url: String,
     pub buyer_private_key: String,
+    pub database_url: String,
 }
 
 impl ProgramConfig {

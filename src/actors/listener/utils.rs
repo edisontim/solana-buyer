@@ -1,16 +1,23 @@
 use std::str::FromStr;
 use std::sync::Arc;
 
-use eyre::{eyre, OptionExt};
+use borsh::BorshDeserialize;
+use eyre::eyre;
+use eyre::OptionExt;
+use solana_account_decoder::UiAccountEncoding;
 use solana_client::nonblocking::rpc_client::RpcClient;
+use solana_client::rpc_config::RpcAccountInfoConfig;
 use solana_client::rpc_config::RpcTransactionConfig;
 use solana_sdk::pubkey::Pubkey;
-use solana_sdk::{commitment_config::CommitmentConfig, signature::Signature};
+use solana_sdk::signature::Signature;
+use solana_sdk::{account::ReadableAccount, commitment_config::CommitmentConfig};
 use solana_transaction_status::{
-    EncodedConfirmedTransactionWithStatusMeta, EncodedTransaction, UiMessage, UiTransactionEncoding,
+    EncodedConfirmedTransactionWithStatusMeta, EncodedTransaction, UiMessage,
 };
 
-use crate::actors::swapper::actor::PoolInitTxInfos;
+use crate::types::PoolInfo;
+
+use crate::actors::listener::actor::PoolInitTxInfos;
 use crate::constants::{
     AMM_ID_INDEX_IN_INIT_INSTRUCTION, AMM_V4, BASE_MINT_INDEX_IN_INIT_INSTRUCTION,
     MARKET_ID_INDEX_IN_INIT_INSTRUCTION, QUOTE_MINT_INDEX_IN_INIT_INSTRUCTION,
@@ -51,13 +58,38 @@ pub(super) async fn get_pool_init_infos(
         .await
 }
 
+pub(super) async fn get_pool_info(
+    client: &RpcClient,
+    amm_id: Pubkey,
+) -> Result<PoolInfo, eyre::Error> {
+    let rpc_response = client
+        .get_multiple_accounts_with_config(
+            &[amm_id],
+            RpcAccountInfoConfig {
+                encoding: Some(UiAccountEncoding::Base64),
+                data_slice: None,
+                commitment: Some(CommitmentConfig::confirmed()),
+                ..RpcAccountInfoConfig::default()
+            },
+        )
+        .await?;
+
+    let pool_info_account = rpc_response
+        .value
+        .first()
+        .cloned()
+        .flatten()
+        .ok_or_eyre(format!("amm_id account ({:?}) not found", amm_id))?;
+    let pool_info = PoolInfo::deserialize(&mut pool_info_account.data())?;
+
+    Ok(pool_info)
+}
+
 /// Get the transaction signature from the log
 pub(super) fn get_transaction_signature(
     log: LogsSubscribeResponse,
 ) -> Result<Signature, eyre::Error> {
     let signature = log.params.result.value.signature;
-    tracing::debug!("signature {:?}", signature);
-
     let signature = Signature::from_str(&signature)?;
     Ok(signature)
 }

@@ -38,6 +38,7 @@ impl InstantSwapSubcommand {
                 &Pubkey::from_str(&self.input_token_address)
                     .expect("Enter correct input token address"),
                 self.amount_in,
+                None,
             )
             .await
             .expect("failed to swap");
@@ -52,6 +53,7 @@ impl InstantSwapSubcommand {
                 &Pubkey::from_str(&self.output_token_address)
                     .expect("Enter correct output token address"),
                 amount_in,
+                None,
             )
             .await
             .expect("failed to swap");

@@ -1,29 +1,35 @@
 use core::time;
-use std::sync::Arc;
+use std::{env, sync::Arc};
 
 use async_trait::async_trait;
 use coerce::actor::context::ActorContext;
 use coerce::actor::Actor;
 use eyre::{eyre, Result};
 use raydium_contract_instructions::amm_instruction as amm;
-use solana_client::{
-    client_error::ClientErrorKind, nonblocking::rpc_client::RpcClient,
-    rpc_config::RpcSendTransactionConfig,
-};
+use solana_client::client_error::ClientErrorKind;
+use solana_client::rpc_request::RpcError;
+use solana_client::{nonblocking::rpc_client::RpcClient, rpc_config::RpcSendTransactionConfig};
+use solana_rpc_client_api::client_error::Error;
+
+use solana_sdk::instruction::InstructionError;
+use solana_sdk::transaction::TransactionError;
 use solana_sdk::{
     commitment_config::{CommitmentConfig, CommitmentLevel},
-    instruction::{Instruction, InstructionError},
+    instruction::Instruction,
     pubkey::Pubkey,
     signature::Keypair,
     signer::Signer,
-    transaction::{Transaction, TransactionError},
+    transaction::Transaction,
 };
 use spl_associated_token_account::instruction::create_associated_token_account;
+use std::time::{Duration, Instant};
+use tokio::{fs::OpenOptions, io::AsyncWriteExt};
 
+use crate::actors::listener::actor::PoolInitTxInfos;
 use crate::{
     constants::{
-        AMM_V4, LAMPORTS_PER_SOL, MAX_LIQUIDITY, MIN_LIQUIDITY, RAYDIUM_AUTHORITY_V4, SOL,
-        TOKEN_PROGRAM,
+        AMM_V4, LAMPORTS_PER_SOL, MAX_LIQUIDITY, MIN_LIQUIDITY, RAYDIUM_AUTHORITY_V4, RUG_AMOUNT,
+        SOL, TOKEN_PROGRAM,
     },
     types::{MarketInfo, PoolInfo, ProgramConfig},
     utils::{
@@ -31,6 +37,8 @@ use crate::{
         get_prio_fee_instructions, get_token_accounts,
     },
 };
+
+const MAX_PRICE_CHECK_ITERATIONS: usize = 100;
 
 pub struct Swapper {
     client: Arc<RpcClient>,
@@ -43,14 +51,6 @@ pub struct Swapper {
     associated_authority: Pubkey,
     account_to_create: Option<Pubkey>,
     trade_amount: f64,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct PoolInitTxInfos {
-    pub amm_id: Pubkey,
-    pub market_id: Pubkey,
-    pub base_mint: Pubkey,
-    pub quote_mint: Pubkey,
 }
 
 #[async_trait]
@@ -79,8 +79,6 @@ impl Actor for Swapper {
                     return;
                 }
             };
-        tracing::info!("solana vault: {}", sol_vault);
-
         let maybe_vault_sol_account = get_token_accounts(&self.client, &[sol_vault]).await;
         if let Err(e) = maybe_vault_sol_account {
             tracing::error!("stopping swapper: failed to get token account: {:?}", e);
@@ -106,7 +104,7 @@ impl Actor for Swapper {
         // BUY
         // We await here because we don't want the actor to do
         // anything else until the swap is complete.
-        if let Err(e) = self.swap(&SOL, self.trade_amount).await {
+        if let Err(e) = self.swap(&SOL, self.trade_amount, Some(0)).await {
             tracing::error!("stopping swapper: failed to swap: {:?}", e);
             ctx.stop(None);
             return;
@@ -167,7 +165,7 @@ impl Swapper {
         let user_keypair = Keypair::from_base58_string(&config.buyer_private_key);
 
         let (pool_info, market_info, user_token_accounts) =
-            get_accounts_for_swap(&client, &user_keypair, pool_init_tx_infos).await?;
+            get_accounts_for_swap(&client, &user_keypair, &pool_init_tx_infos).await?;
 
         let associated_authority =
             get_associated_authority(pool_info.market_program_id, pool_info.market_id).unwrap();
@@ -224,6 +222,11 @@ impl Swapper {
             let sol_vault_amount = token_accounts.get(1).unwrap().amount as f64;
             let target_token_vault_amount = token_accounts.get(2).unwrap().amount as f64;
 
+            if sol_vault_amount <= RUG_AMOUNT {
+                tracing::info!("Rugged");
+                break;
+            }
+
             let buy_price = (self.trade_amount * *LAMPORTS_PER_SOL) / target_token_amount;
             let current_price = sol_vault_amount / target_token_vault_amount;
 
@@ -233,8 +236,8 @@ impl Swapper {
                 target_token_amount * 10_f64.powi(-(target_token_decimals as i32));
             if current_price > 2. * buy_price {
                 tracing::info!("selling");
-                if let Err(e) = self
-                    .swap(&target_token_mint, target_token_amount / 2.)
+                if let Err(_e) = self
+                    .swap(&target_token_mint, target_token_amount / 2., None)
                     .await
                 {
                     continue;
@@ -250,7 +253,12 @@ impl Swapper {
         }
     }
 
-    pub async fn swap(&self, in_token: &Pubkey, amount_in: f64) -> Result<()> {
+    pub async fn swap(
+        &self,
+        in_token: &Pubkey,
+        amount_in: f64,
+        max_retries: Option<usize>,
+    ) -> Result<()> {
         let mut instructions = vec![];
         let (user_out_token_account, user_in_token_account) =
             if *in_token == self.pool_info.base_mint {
@@ -279,7 +287,6 @@ impl Swapper {
         } else {
             amount_in * 10_f64.powi(self.pool_info.quote_decimal.try_into().unwrap())
         };
-        tracing::debug!("swap base in: {} for minimum 0 out", amount_in);
         let instruction = self.build_swap_base_in_instruction(
             amount_in,
             0.,
@@ -288,12 +295,16 @@ impl Swapper {
         );
 
         instructions.push(instruction);
-        let ret = self.sign_and_send_instructions(instructions).await;
-        if ret.is_err() {
-            self.process_swap_error(ret.err().unwrap())
-        } else {
-            Ok(())
-        }
+
+        let start = Instant::now();
+        let swap_result = Ok(self
+            .sign_and_send_instructions(instructions, max_retries)
+            .await?);
+        let duration = start.elapsed();
+
+        self.log_swap_to_file(amount_in, *in_token, duration).await;
+
+        swap_result
     }
 
     fn build_swap_base_in_instruction(
@@ -331,56 +342,108 @@ impl Swapper {
     async fn sign_and_send_instructions(
         &self,
         instructions: Vec<Instruction>,
-    ) -> Result<(), solana_client::client_error::ClientError> {
+        max_retries: Option<usize>,
+    ) -> Result<(), eyre::Error> {
+        let commitment_level = CommitmentLevel::Finalized;
         let recent_blockhash = self
             .client
             .get_latest_blockhash_with_commitment(solana_sdk::commitment_config::CommitmentConfig {
-                commitment: solana_sdk::commitment_config::CommitmentLevel::Finalized,
+                commitment: commitment_level,
             })
             .await
             .unwrap()
             .0;
 
-        let transaction = Transaction::new_signed_with_payer(
+        let legacy_transaction = Transaction::new_signed_with_payer(
             &instructions,
             Some(&self.user_keypair.pubkey()),
             &vec![&self.user_keypair],
             recent_blockhash,
         );
 
-        let _ = self
+        let swap_result = self
             .client
             .send_and_confirm_transaction_with_spinner_and_config(
-                &transaction,
-                CommitmentConfig::confirmed(),
+                &legacy_transaction,
+                CommitmentConfig::finalized(),
                 RpcSendTransactionConfig {
-                    skip_preflight: true,
-                    preflight_commitment: Some(CommitmentLevel::Processed),
-                    max_retries: Some(0),
+                    skip_preflight: false,
+                    preflight_commitment: Some(commitment_level),
+                    max_retries: max_retries,
                     ..RpcSendTransactionConfig::default()
                 },
             )
-            .await?;
+            .await;
+
+        if swap_result.is_err() {
+            return self.process_swap_error(swap_result.unwrap_err());
+        }
+
         Ok(())
     }
 
-    fn process_swap_error(
-        &self,
-        err: solana_client::client_error::ClientError,
-    ) -> Result<(), eyre::Error> {
+    fn process_swap_error(&self, err: Error) -> Result<(), eyre::Error> {
         let kind = err.kind();
-        match *kind {
+        match kind {
             ClientErrorKind::TransactionError(TransactionError::InstructionError(
                 _,
                 InstructionError::Custom(custom_error_code),
             )) => {
-                if custom_error_code == 0x16 {
+                if *custom_error_code == 0x16 {
                     Err(eyre!("Pool isn't open for trades yet"))
                 } else {
                     Err(eyre!("{:?}", err))
                 }
             }
+            ClientErrorKind::RpcError(RpcError::RpcResponseError {
+                code,
+                message,
+                data,
+            }) => Err(eyre!(
+                "RPC error ({}) because {}. Data: {:?}",
+                code,
+                message,
+                data
+            )),
+
             _ => Err(eyre!("{:?}", err)),
         }
+    }
+
+    async fn log_swap_to_file(&self, amount_in: f64, in_token: Pubkey, duration: Duration) {
+        let out_token = if in_token == self.pool_info.base_mint {
+            self.pool_info.quote_mint
+        } else {
+            self.pool_info.base_mint
+        };
+
+        let printable_string = format!(
+            "swap: {} of {} - {}. RPC: {} - {}ms\n",
+            amount_in,
+            in_token,
+            out_token,
+            self.client.url(),
+            duration.as_millis()
+        );
+        println!(
+            "{}",
+            env::var("CARGO_MANIFEST_DIR").unwrap() + "/trade_times"
+        );
+        let mut file = OpenOptions::new()
+            .write(true)
+            .append(true)
+            .open(env::var("CARGO_MANIFEST_DIR").unwrap() + "/trade_times")
+            .await
+            .inspect_err(|err| tracing::debug!("Failure to open file {:?}", err));
+        if file.is_err() {
+            return ();
+        }
+        let _ = file
+            .as_mut()
+            .unwrap()
+            .write_all(printable_string.as_bytes())
+            .await
+            .inspect_err(|err| tracing::debug!("Failure to write {:?}", err));
+        let _ = file.unwrap().flush().await;
     }
 }

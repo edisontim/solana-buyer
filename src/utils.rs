@@ -20,7 +20,7 @@ use solana_transaction_status::EncodedConfirmedTransactionWithStatusMeta;
 use spl_associated_token_account::get_associated_token_address;
 use tracing_subscriber::{filter, FmtSubscriber};
 
-use crate::actors::swapper::actor::PoolInitTxInfos;
+use crate::actors::listener::actor::PoolInitTxInfos;
 use crate::types::{TokenAccount, UserTokenAccounts};
 use crate::{
     constants::OPENBOOK,
@@ -39,9 +39,8 @@ pub fn init_logging() {
 }
 
 pub fn get_prio_fee_instructions() -> (Instruction, Instruction) {
-    let prio_fee = 130_000;
-    tracing::debug!("priority fee {:?}", prio_fee);
-    let compute_unit_limit_instruction = ComputeBudgetInstruction::set_compute_unit_limit(110_000);
+    let prio_fee = 6_000_000;
+    let compute_unit_limit_instruction = ComputeBudgetInstruction::set_compute_unit_limit(70_000);
     let compute_unit_price_instruction = ComputeBudgetInstruction::set_compute_unit_price(prio_fee);
     (
         compute_unit_limit_instruction,
@@ -66,7 +65,7 @@ pub fn get_associated_authority(program_id: Pubkey, market_id: Pubkey) -> Option
 pub async fn get_accounts_for_swap(
     client: &RpcClient,
     user_keypair: &Keypair,
-    pool_init_tx_infos: PoolInitTxInfos,
+    pool_init_tx_infos: &PoolInitTxInfos,
 ) -> Result<(PoolInfo, MarketInfo, UserTokenAccounts)> {
     let mut account_to_create: Option<Pubkey> = None;
 
@@ -187,7 +186,7 @@ pub async fn get_token_accounts(
         .ok_or_else(|| eyre!("Token accounts not found"))?;
 
     if accounts_pub_keys.len() != accounts.len() {
-        return Err(eyre!("Token accounts not found"));
+        return Err(eyre!("Invalid lengths of accounts received"));
     }
 
     let account = accounts

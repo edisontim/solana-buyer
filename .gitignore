@@ -1,2 +1,5 @@
 /target
 .env
+migration/target
+.venv/
+liquidities.db
